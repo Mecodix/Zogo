@@ -1,17 +1,23 @@
 mod automation;
 mod capture;
+// TM matcher parked (ORB-only runtime): most of detect/ is still live
+// (Hit, regions, template load), this silences only the unused TM fns.
+#[allow(dead_code)]
 mod detect;
+mod orb;
 mod tap;
 
 use std::time::Duration;
 
-use automation::{AdCloser, ScreenAutomation};
+use automation::{OrbXCloser, ScreenAutomation};
 use tap::Tapper;
 
 fn main() -> anyhow::Result<()> {
     let mut tapper = Tapper::new()?;
     // Multi-logic: add more automations here, first hit wins per frame.
-    let mut jobs: Vec<Box<dyn ScreenAutomation>> = vec![Box::new(AdCloser::new()?)];
+    // ORB-only runtime (no template matching): swap OrbXCloser for AdCloser
+    // to A/B against the parked Canny matcher.
+    let mut jobs: Vec<Box<dyn ScreenAutomation>> = vec![Box::new(OrbXCloser::new()?)];
 
     println!("sniper v4 live: {} job(s), 4 regions", jobs.len());
 
