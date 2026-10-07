@@ -30,7 +30,7 @@ impl OrbMatcher {
         // Raw gray on purpose: ORB needs intensity texture (FAST corners +
         // BRIEF). Edge maps would destroy exactly what it measures.
         let base = detect::load_template_gray("x_template.png")?;
-        let mut orb = ORB::create(1000, 1.2, 8, 31, 0, 2, ORB_ScoreType::ORB_HARRIS_SCORE, 31, 20)?;
+        let mut orb = ORB::create(1000, 1.2, 8, 31, 0, 2, ORB_ScoreType::HARRIS_SCORE, 31, 20)?;
         let mut kps = Vector::<KeyPoint>::new();
         let mut desc = Mat::default();
         orb.detect_and_compute(&base, &core::no_array(), &mut kps, &mut desc, false)?;
