@@ -1,6 +1,6 @@
 use opencv::{
-    core::{self, Mat, Point, Vector, NORM_HAMMING},
-    features2d::{BFMatcher, DMatch, DescriptorMatcherTraitConst, Feature2DTrait, KeyPoint, ORB},
+    core::{self, DMatch, KeyPoint, Mat, Point, Ptr, Vector, NORM_HAMMING},
+    features2d::{BFMatcher, DescriptorMatcherTraitConst, Feature2DTrait, ORB},
     prelude::*,
 };
 
@@ -20,8 +20,8 @@ pub const MIN_GOOD: usize = 6;
 pub const STRONG_GOOD: usize = 12;
 
 pub struct OrbMatcher {
-    orb: ORB,
-    matcher: BFMatcher,
+    orb: Ptr<ORB>,
+    matcher: Ptr<BFMatcher>,
     tpl_desc: Mat,
 }
 
@@ -30,7 +30,7 @@ impl OrbMatcher {
         // Raw gray on purpose: ORB needs intensity texture (FAST corners +
         // BRIEF). Edge maps would destroy exactly what it measures.
         let base = detect::load_template_gray("x_template.png")?;
-        let mut orb = ORB::new(1000, 1.2, 8, 31, 0, 2, 0, 31, 20)?;
+        let mut orb = ORB::create(1000, 1.2, 8, 31, 0, 2, 0, 31, 20)?;
         let mut kps = Vector::<KeyPoint>::new();
         let mut desc = Mat::default();
         orb.detect_and_compute(&base, &core::no_array(), &mut kps, &mut desc, false)?;
@@ -40,7 +40,7 @@ impl OrbMatcher {
             anyhow::bail!("template too featureless ({} kps, need {})", kps.len(), MIN_GOOD);
         }
         eprintln!("orb template: {} kps", kps.len());
-        let matcher = BFMatcher::new(NORM_HAMMING, false)?;
+        let matcher = BFMatcher::create(NORM_HAMMING, false)?;
         Ok(Self {
             orb,
             matcher,
