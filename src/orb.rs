@@ -54,7 +54,7 @@ impl OrbMatcher {
         let mut desc = Mat::default();
         self.orb
             .detect_and_compute(roi_gray, &core::no_array(), &mut kps, &mut desc, false)?;
-        if desc.empty() || kps.len() == 0 {
+        if desc.empty() || kps.is_empty() {
             return Ok(None);
         }
         let mut knn = Vector::<Vector<DMatch>>::new();
