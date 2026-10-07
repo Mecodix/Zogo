@@ -1,6 +1,6 @@
 use opencv::{
     core::{self, DMatch, KeyPoint, Mat, Point, Ptr, Vector, NORM_HAMMING},
-    features2d::{BFMatcher, DescriptorMatcherTraitConst, Feature2DTrait, ORB},
+    features2d::{BFMatcher, DescriptorMatcherTraitConst, Feature2DTrait, ORB, ORB_ScoreType},
     prelude::*,
 };
 
@@ -30,7 +30,7 @@ impl OrbMatcher {
         // Raw gray on purpose: ORB needs intensity texture (FAST corners +
         // BRIEF). Edge maps would destroy exactly what it measures.
         let base = detect::load_template_gray("x_template.png")?;
-        let mut orb = ORB::create(1000, 1.2, 8, 31, 0, 2, 0, 31, 20)?;
+        let mut orb = ORB::create(1000, 1.2, 8, 31, 0, 2, ORB_ScoreType::ORB_HARRIS_SCORE, 31, 20)?;
         let mut kps = Vector::<KeyPoint>::new();
         let mut desc = Mat::default();
         orb.detect_and_compute(&base, &core::no_array(), &mut kps, &mut desc, false)?;
@@ -72,8 +72,9 @@ impl OrbMatcher {
             let q = pair.get(1)?;
             if m.distance < LOWE_RATIO * q.distance {
                 let kp = kps.get(m.train_idx as usize)?;
-                sx += kp.pt.x as f64;
-                sy += kp.pt.y as f64;
+                let pt = kp.pt();
+                sx += pt.x as f64;
+                sy += pt.y as f64;
                 n += 1;
             }
         }
