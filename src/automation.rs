@@ -13,15 +13,16 @@ pub trait ScreenAutomation {
     fn cooldown_ms(&self) -> u64;
 }
 
-// Specific screen logic #1: ad / popup X closer (ORB features, KNN k=2,
-// Lowe 0.75, tap = centroid of good screen-side keypoints).
-// Same 4 regions (top corners + mid sides) + tracking as before.
+// Parked alternative: ORB features (KNN k=2, Lowe 0.75, centroid tap).
+// Kept for A/B: benchmarks say edge-template wins on flat X icons.
+#[allow(dead_code)]
 pub struct OrbXCloser {
     orb: OrbMatcher,
     last_hit: Option<Point>,
     misses: u32,
 }
 
+#[allow(dead_code)]
 impl OrbXCloser {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
@@ -32,6 +33,7 @@ impl OrbXCloser {
     }
 }
 
+#[allow(dead_code)]
 impl ScreenAutomation for OrbXCloser {
     fn name(&self) -> &str {
         "orb_x"
@@ -121,17 +123,14 @@ impl ScreenAutomation for OrbXCloser {
     }
 }
 
-// Parked: Canny multi-scale template matcher. On tiny low-texture X icons it
-// historically out-scores ORB (few keypoints starve the ratio test), so it
-// stays one line away in main.rs if device logs say ORB misses real ads.
-#[allow(dead_code)]
+// Active accuracy pick: Canny multi-scale template matcher. Benchmarks and
+// UI-icon literature agree edge-shape beats ORB on tiny low-texture X icons.
 pub struct AdCloser {
     pyramid: Vec<Tpl>,
     last_hit: Option<Point>,
     misses: u32,
 }
 
-#[allow(dead_code)]
 impl AdCloser {
     pub fn new() -> anyhow::Result<Self> {
         let base = detect::load_template_gray("x_template.png")?;
@@ -147,7 +146,6 @@ impl AdCloser {
     }
 }
 
-#[allow(dead_code)]
 impl ScreenAutomation for AdCloser {
     fn name(&self) -> &str {
         "ad_closer"

@@ -1,6 +1,6 @@
 use opencv::{
     core::{self, DMatch, KeyPoint, Mat, Point, Ptr, Vector, NORM_HAMMING},
-    features2d::{BFMatcher, DescriptorMatcherTraitConst, Feature2DTrait, ORB, ORB_ScoreType},
+    features2d::{BFMatcher, DescriptorMatcherTraitConst, Feature2DTrait, ORB_ScoreType, ORB},
     prelude::*,
 };
 
@@ -37,7 +37,11 @@ impl OrbMatcher {
         // A bare synthetic X yields few keypoints; a real cropped screenshot
         // (rounded rect, shadow, bg) yields far more. Prefer the real one.
         if desc.empty() || kps.len() < MIN_GOOD {
-            anyhow::bail!("template too featureless ({} kps, need {})", kps.len(), MIN_GOOD);
+            anyhow::bail!(
+                "template too featureless ({} kps, need {})",
+                kps.len(),
+                MIN_GOOD
+            );
         }
         eprintln!("orb template: {} kps", kps.len());
         let matcher = BFMatcher::create(NORM_HAMMING, false)?;
