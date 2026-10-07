@@ -57,7 +57,10 @@ impl ScreenAutomation for AdCloser {
                 cols,
                 rows,
             ) {
-                if let Ok(roi) = Mat::roi(gray, r) {
+                // 0.101: Mat::roi returns a borrowed view; clone() is cheap
+                // (refcount bump) and gives the owned Mat our helpers take.
+                if let Ok(roi_view) = Mat::roi(gray, r) {
+                    let roi: Mat = (*roi_view).clone();
                     if let Ok(re) = detect::canny(&roi) {
                         if let Ok(Some((loc, w, h, s))) = detect::match_roi(&re, &self.pyramid) {
                             let hit = Hit {
@@ -77,8 +80,8 @@ impl ScreenAutomation for AdCloser {
 
         let mut best: Option<Hit> = None;
         for region in detect::default_regions(cols, rows) {
-            let roi = match Mat::roi(gray, region.rect) {
-                Ok(m) => m,
+            let roi: Mat = match Mat::roi(gray, region.rect) {
+                Ok(v) => (*v).clone(),
                 Err(_) => continue,
             };
             let re = match detect::canny(&roi) {

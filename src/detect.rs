@@ -1,6 +1,7 @@
 use opencv::{
-    core::{self, Mat, Point, Rect, Size, TM_CCOEFF_NORMED},
-    imgcodecs, imgproc,
+    core::{self, Mat, Point, Rect, Size},
+    imgcodecs,
+    imgproc::{self, TM_CCOEFF_NORMED},
     prelude::*,
 };
 
