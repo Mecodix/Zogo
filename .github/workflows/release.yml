@@ -33,8 +33,9 @@ jobs:
         run: |
           curl -sL -o /tmp/ocv.zip https://github.com/opencv/opencv/releases/download/4.14.0/opencv-4.14.0-android-sdk.zip
           unzip -q /tmp/ocv.zip -d /tmp/ocv
-          LIBDIR="$(find /tmp/ocv -type d -name arm64-v8a -path '*native*' | head -1)"
-          if [ -z "$LIBDIR" ]; then echo "SDK layout:"; find /tmp/ocv -maxdepth 4 | head -30; exit 1; fi
+          LIBFILE="$(find /tmp/ocv -name 'libopencv_java4.so' -path '*arm64-v8a*' | head -1)"
+          if [ -z "$LIBFILE" ]; then echo "SDK layout:"; find /tmp/ocv -maxdepth 5 | head -30; exit 1; fi
+          LIBDIR="$(dirname "$LIBFILE")"
           OCV_NATIVE="$(dirname "$(dirname "$LIBDIR")")"
           echo "OPENCV_LINK_PATHS=$LIBDIR" >> "$GITHUB_ENV"
           echo "OPENCV_INCLUDE_PATHS=$OCV_NATIVE/jni/include" >> "$GITHUB_ENV"
