@@ -17,8 +17,8 @@ jobs:
         with:
           components: clippy, rustfmt
       - name: Check
-        run: cargo check --locked
+        run: cargo check
       - name: Clippy
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy -- -D warnings
       - name: Fmt
         run: cargo fmt --check
