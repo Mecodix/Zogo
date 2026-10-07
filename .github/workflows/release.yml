@@ -46,6 +46,8 @@ jobs:
         run: |
           SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           export OPENCV_CLANG_ARGS="--target=aarch64-linux-android --sysroot=$SYSROOT"
+          export LIBCLANG_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib"
+          ls "$LIBCLANG_PATH"/libclang.so* | head -3
           cargo ndk -t arm64-v8a build --release
 
       - name: Package with shared libs
