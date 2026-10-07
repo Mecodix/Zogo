@@ -41,8 +41,24 @@ pub fn load_template_gray(path: &str) -> anyhow::Result<Mat> {
     // Synthetic X fallback so binary runs with zero assets.
     let mut m = Mat::zeros(64, 64, core::CV_8UC1)?.to_mat()?;
     let white = core::Scalar::all(255.0);
-    imgproc::line(&mut m, Point::new(10, 10), Point::new(54, 54), white, 8, imgproc::LINE_8, 0)?;
-    imgproc::line(&mut m, Point::new(54, 10), Point::new(10, 54), white, 8, imgproc::LINE_8, 0)?;
+    imgproc::line(
+        &mut m,
+        Point::new(10, 10),
+        Point::new(54, 54),
+        white,
+        8,
+        imgproc::LINE_8,
+        0,
+    )?;
+    imgproc::line(
+        &mut m,
+        Point::new(54, 10),
+        Point::new(10, 54),
+        white,
+        8,
+        imgproc::LINE_8,
+        0,
+    )?;
     Ok(m)
 }
 
@@ -57,7 +73,14 @@ pub fn build_pyramid(base: &Mat) -> anyhow::Result<Vec<Tpl>> {
     let mut out = Vec::with_capacity(SCALES.len());
     for &s in &SCALES {
         let mut resized = Mat::default();
-        imgproc::resize(base, &mut resized, Size::new(0, 0), s, s, imgproc::INTER_LINEAR)?;
+        imgproc::resize(
+            base,
+            &mut resized,
+            Size::new(0, 0),
+            s,
+            s,
+            imgproc::INTER_LINEAR,
+        )?;
         if resized.cols() < 10 || resized.rows() < 10 {
             continue;
         }
@@ -71,7 +94,10 @@ pub fn build_pyramid(base: &Mat) -> anyhow::Result<Vec<Tpl>> {
     Ok(out)
 }
 
-pub fn match_roi(roi_edges: &Mat, pyramid: &[Tpl]) -> anyhow::Result<Option<(Point, i32, i32, f64)>> {
+pub fn match_roi(
+    roi_edges: &Mat,
+    pyramid: &[Tpl],
+) -> anyhow::Result<Option<(Point, i32, i32, f64)>> {
     let mut best_score = 0.0;
     let mut best_loc = Point::new(0, 0);
     let mut best_w = 0;
@@ -81,10 +107,23 @@ pub fn match_roi(roi_edges: &Mat, pyramid: &[Tpl]) -> anyhow::Result<Option<(Poi
             continue;
         }
         let mut result = Mat::default();
-        imgproc::match_template(roi_edges, &t.edges, &mut result, TM_CCOEFF_NORMED, &core::no_array())?;
+        imgproc::match_template(
+            roi_edges,
+            &t.edges,
+            &mut result,
+            TM_CCOEFF_NORMED,
+            &core::no_array(),
+        )?;
         let mut max_val = 0.0;
         let mut max_loc = Point::new(0, 0);
-        core::min_max_loc(&result, None, Some(&mut max_val), None, Some(&mut max_loc), &core::no_array())?;
+        core::min_max_loc(
+            &result,
+            None,
+            Some(&mut max_val),
+            None,
+            Some(&mut max_loc),
+            &core::no_array(),
+        )?;
         if max_val > best_score {
             best_score = max_val;
             best_loc = max_loc;

@@ -40,7 +40,14 @@ fn main() -> anyhow::Result<()> {
         for job in jobs.iter_mut() {
             match job.step(&gray) {
                 Ok(Some(h)) => {
-                    eprintln!("hit [{}] {:.3} @ {},{} ({})", job.name(), h.score, h.x, h.y, h.region);
+                    eprintln!(
+                        "hit [{}] {:.3} @ {},{} ({})",
+                        job.name(),
+                        h.score,
+                        h.x,
+                        h.y,
+                        h.region
+                    );
                     tapper.tap(h.x, h.y);
                     fired_cooldown = job.cooldown_ms();
                     break; // one tap per frame

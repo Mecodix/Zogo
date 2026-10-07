@@ -43,7 +43,11 @@ impl DirectTap {
         let x = x.clamp(0, MAX_X - 1);
         let y = y.clamp(0, MAX_Y - 1);
         let id = self.next_id;
-        self.next_id = if self.next_id >= 60000 { 1 } else { self.next_id + 1 };
+        self.next_id = if self.next_id >= 60000 {
+            1
+        } else {
+            self.next_id + 1
+        };
         ev_write(&mut self.f, EV_ABS, ABS_MT_SLOT, TAP_SLOT)?;
         ev_write(&mut self.f, EV_ABS, ABS_MT_TRACKING_ID, id)?;
         ev_write(&mut self.f, EV_ABS, ABS_MT_POSITION_X, x)?;
@@ -119,7 +123,9 @@ impl Tapper {
             eprintln!("direct tap failed, fallback");
         }
         self.ensure_su();
-        if writeln!(self.su_stdin, "input tap {} {}", x, y).is_err() || self.su_stdin.flush().is_err() {
+        if writeln!(self.su_stdin, "input tap {} {}", x, y).is_err()
+            || self.su_stdin.flush().is_err()
+        {
             eprintln!("su pipe broken");
         }
     }

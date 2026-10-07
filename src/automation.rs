@@ -96,7 +96,10 @@ impl ScreenAutomation for AdCloser {
                         score: s,
                         region: region.name,
                     };
-                    let better = best.as_ref().map(|b: &Hit| cand.score > b.score).unwrap_or(true);
+                    let better = best
+                        .as_ref()
+                        .map(|b: &Hit| cand.score > b.score)
+                        .unwrap_or(true);
                     if better {
                         let strong = cand.score >= detect::STRONG_HIT;
                         best = Some(cand);
