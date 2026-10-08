@@ -7,6 +7,8 @@ on:
 jobs:
   android-arm64:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     env:
       OPENCV_LINK_LIBS: opencv_java4
       OPENCV_DISABLE_PROBES: pkg_config,cmake,vcpkg,vcpkg_cmake
