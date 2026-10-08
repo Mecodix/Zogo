@@ -7,7 +7,7 @@ use opencv::{
 
 // Reusable hand: edge-template vision. No screen logic here.
 // Tuned for SM-E146B 1080x2408: X icons are ~48-80px, hence 64px base.
-pub const SCALES: [f64; 5] = [0.85, 0.92, 1.0, 1.08, 1.15];
+pub const SCALES: [f64; 7] = [0.65, 0.75, 0.85, 0.92, 1.0, 1.08, 1.15];
 pub const CANNY_LOW: f64 = 50.0;
 pub const CANNY_HIGH: f64 = 150.0;
 // Dual gate ported from Klick'r TemplateMatcher: shape confidence ANDed
