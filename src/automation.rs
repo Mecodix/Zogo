@@ -331,21 +331,18 @@ impl ScreenAutomation for AdCloser {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
-            match self.scan(&roi, &croi, region.rect.x, region.rect.y, region.name) {
-                Some(cand) => {
-                    let better = best
-                        .as_ref()
-                        .map(|b: &Hit| cand.score > b.score)
-                        .unwrap_or(true);
-                    if better {
-                        let strong = cand.score >= detect::STRONG_CONF;
-                        best = Some(cand);
-                        if strong {
-                            break;
-                        }
+            if let Some(cand) = self.scan(&roi, &croi, region.rect.x, region.rect.y, region.name) {
+                let better = best
+                    .as_ref()
+                    .map(|b: &Hit| cand.score > b.score)
+                    .unwrap_or(true);
+                if better {
+                    let strong = cand.score >= detect::STRONG_CONF;
+                    best = Some(cand);
+                    if strong {
+                        break;
                     }
                 }
-                None => {}
             }
         }
 
