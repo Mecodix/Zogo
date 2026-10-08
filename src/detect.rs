@@ -13,9 +13,11 @@ pub const CANNY_HIGH: f64 = 150.0;
 // Dual gate, Klick'r-style but dim-proof: shape confidence ANDed with
 // hue/saturation distance plus a brightness-CONTRAST check (not absolute
 // color-mean, which popup dim animations shift under our feet).
-// 0.80 is safe only with the mask: background stops diluting true scores,
-// so real X's clear it while junk stays buried.
-pub const MATCH_CONF: f64 = 0.80;
+// 0.75: measured on-device — true X 0.77, nearest junk 0.73, old junk
+// 0.65. Gate sits in the verified gap; HS/contrast gates plus the cell
+// budget contain what slips near it. 0.80+ (textbook advice) kills real
+// hits here, so the number comes from logs, not books.
+pub const MATCH_CONF: f64 = 0.75;
 pub const HS_MAX: f64 = 15.0;
 pub const CONTRAST_RATIO: f64 = 0.5;
 pub const STRONG_CONF: f64 = 0.90;
