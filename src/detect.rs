@@ -49,6 +49,10 @@ pub fn load_templates() -> anyhow::Result<Vec<Mat>> {
         "x_template2.png",
         "x_template3.png",
     ] {
+        // exists() first: imread_ logs a scary WARN for missing files.
+        if !std::path::Path::new(name).exists() {
+            continue;
+        }
         if let Ok(m) = imgcodecs::imread(name, imgcodecs::IMREAD_GRAYSCALE) {
             if !m.empty() {
                 eprintln!("template {}: {}x{}", name, m.cols(), m.rows());
