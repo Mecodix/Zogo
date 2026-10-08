@@ -88,7 +88,12 @@ pub struct Tapper {
     direct: Option<DirectTap>,
     su_child: Child,
     su_stdin: BufWriter<ChildStdin>,
+    taps: u64,
 }
+
+// Klick'r `randomize`: never hammer the exact same pixel. 5-point cycle,
+// +-3px max — inside any real button, invisible to users, un-robotic.
+const JITTER: [(i32, i32); 5] = [(0, 0), (2, 1), (-2, -1), (1, 2), (-1, 2)];
 
 impl Tapper {
     pub fn new() -> anyhow::Result<Self> {
@@ -107,6 +112,7 @@ impl Tapper {
             direct,
             su_child,
             su_stdin,
+            taps: 0,
         })
     }
 
@@ -126,6 +132,10 @@ impl Tapper {
     }
 
     pub fn tap(&mut self, x: i32, y: i32) {
+        let (dx, dy) = JITTER[(self.taps % JITTER.len() as u64) as usize];
+        self.taps += 1;
+        let x = (x + dx).max(0);
+        let y = (y + dy).max(0);
         if let Some(d) = self.direct.as_mut() {
             if d.tap(x, y).is_ok() {
                 return;

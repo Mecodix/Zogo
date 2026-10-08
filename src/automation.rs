@@ -220,6 +220,11 @@ impl ScreenAutomation for AdCloser {
 
     fn note_tapped(&mut self, x: i32, y: i32) {
         self.budget.note_tapped(x, y);
+        // Freshly rested cell + stale track = instant re-tap loop on app
+        // chrome. Drop tracking so the next hit must re-prove itself.
+        if self.budget.banned(x, y) {
+            self.last_hit = None;
+        }
     }
 
     fn step(&mut self, frame: &Frame) -> anyhow::Result<Option<Hit>> {
