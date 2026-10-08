@@ -22,6 +22,9 @@ pub const HS_MAX: f64 = 15.0;
 pub const CONTRAST_RATIO: f64 = 0.5;
 pub const STRONG_CONF: f64 = 0.90;
 pub const MAX_CANDIDATES: i32 = 3;
+// Tier-1 prefilter: base-scale shape score that justifies the full pyramid.
+// Junk frames read 0.2-0.4, true X reads 0.7+; 0.45 splits them cheaply.
+pub const PREFILTER_SCORE: f64 = 0.45;
 pub const TRACK_SIZE: i32 = 140;
 
 pub struct Tpl {
@@ -31,6 +34,7 @@ pub struct Tpl {
     pub tpl: usize,
     pub hs: [f64; 2],
     pub grange: f64,
+    pub base: bool,
 }
 
 pub struct RawTemplate {
@@ -215,6 +219,7 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
             tpl: tpl_id,
             hs: [hsv[0], hsv[1]],
             grange: mx - mn,
+            base: (s - 1.0).abs() < 1e-9,
             edges,
         });
     }
@@ -310,6 +315,38 @@ pub fn match_roi(
     // Masked gray matching (background in crops is ignored) + HS/contrast
     // gates per candidate + next-best loop on reject. If this OpenCV build
     // rejects masked CCOEFF_NORMED, fall back to unmasked once and remember.
+    // Tier 1: base scale only, shape score only. Empty regions die here
+    // for the price of 2-3 matches instead of the full pyramid.
+    let mut pre = 0.0;
+    for t in pyramid.iter().filter(|t| t.base) {
+        if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
+            continue;
+        }
+        let mut result = Mat::default();
+        imgproc::match_template(
+            roi_edges,
+            &t.edges,
+            &mut result,
+            TM_CCOEFF_NORMED,
+            &core::no_array(),
+        )?;
+        let mut max_val = 0.0;
+        let mut max_loc = Point::new(0, 0);
+        core::min_max_loc(
+            &result,
+            None,
+            Some(&mut max_val),
+            None,
+            Some(&mut max_loc),
+            &core::no_array(),
+        )?;
+        if max_val > pre {
+            pre = max_val;
+        }
+    }
+    if pre < PREFILTER_SCORE {
+        return Ok(None);
+    }
     let mut best: ScoredLoc = None;
     let mut best_score = 0.0;
     'outer: for t in pyramid {
