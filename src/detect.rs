@@ -274,7 +274,9 @@ pub fn default_regions(cols: i32, rows: i32) -> [NamedRegion; 4] {
     let s = ((cols as f32 * 0.32) as i32).clamp(240, 420);
     let rw = s.min(cols);
     let rh = s.min(rows);
-    let mid_y = ((rows as f32 * 0.35) as i32).clamp(0, (rows - rh).max(0));
+    // Upper-middle: Play Store popup X sits above screen middle on the right.
+    // 0.22 keeps continuity with the top boxes (which end ~345px).
+    let mid_y = ((rows as f32 * 0.22) as i32).clamp(0, (rows - rh).max(0));
     [
         NamedRegion {
             name: "top_right",
