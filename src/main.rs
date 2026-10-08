@@ -7,6 +7,7 @@ mod detect;
 mod orb;
 mod tap;
 
+use std::sync::mpsc::sync_channel;
 use std::time::Duration;
 
 use automation::{AdCloser, Frame, ScreenAutomation};
@@ -31,17 +32,32 @@ fn main() -> anyhow::Result<()> {
 
     println!("sniper v5 live: {} job(s), 4 regions", jobs.len());
 
-    // Capture is the floor here (~318ms PNG on SM-E146B), so no frame budget:
-    // each loop costs one screencap no matter what. Back off only when the
-    // device stops giving frames at all.
+    // Pipeline: one thread captures + grayscales while main detects the
+    // previous frame. Cycle becomes max(capture, detect) instead of the sum
+    // (~30% faster frames on this phone). Depth 1: freshest frame wins.
+    let (tx, rx) = sync_channel::<anyhow::Result<Frame>>(1);
+    std::thread::spawn(move || loop {
+        let f = (|| -> anyhow::Result<Frame> {
+            let color = capture::capture_color()?;
+            let gray = capture::to_gray(&color)?;
+            Ok(Frame { gray, color })
+        })();
+        if tx.send(f).is_err() {
+            break;
+        }
+    });
+
+    // Capture is the floor here (~318ms PNG on SM-E146B): each loop costs
+    // one screencap no matter what. Back off only when the device stops
+    // giving frames at all.
     let mut bad_frames = 0u32;
     loop {
-        let color = match capture::capture_color() {
-            Ok(m) => {
+        let frame = match rx.recv() {
+            Ok(Ok(m)) => {
                 bad_frames = 0;
                 m
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 bad_frames += 1;
                 eprintln!("bad frame x{}: {:#}", bad_frames, e);
                 // 150ms -> 300 -> 600 -> cap 1000ms. Persistent failure
@@ -50,15 +66,11 @@ fn main() -> anyhow::Result<()> {
                 std::thread::sleep(Duration::from_millis(wait));
                 continue;
             }
-        };
-        let gray = match capture::to_gray(&color) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("bad gray: {:#}", e);
-                continue;
+            Err(_) => {
+                eprintln!("capture thread gone");
+                break;
             }
         };
-        let frame = Frame { gray, color };
 
         let mut fired_cooldown = 0u64;
         for job in jobs.iter_mut() {
