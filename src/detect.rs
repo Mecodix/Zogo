@@ -190,11 +190,7 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
     Ok(out)
 }
 
-pub fn match_roi(
-    roi_edges: &Mat,
-    roi_color: &Mat,
-    pyramid: &[Tpl],
-) -> anyhow::Result<ScoredLoc> {
+pub fn match_roi(roi_edges: &Mat, roi_color: &Mat, pyramid: &[Tpl]) -> anyhow::Result<ScoredLoc> {
     // Klick'r parseMatchingResult port: per scale, take the best peak; if the
     // HSV color gate rejects it, suppress that area and try the NEXT peak
     // (up to MAX_CANDIDATES) instead of trusting the global max blindly.

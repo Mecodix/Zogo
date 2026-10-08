@@ -236,7 +236,9 @@ impl ScreenAutomation for AdCloser {
                 cols,
                 rows,
             ) {
-                if let (Ok(gview), Ok(cview)) = (Mat::roi(&frame.gray, r), Mat::roi(&frame.color, r)) {
+                if let (Ok(gview), Ok(cview)) =
+                    (Mat::roi(&frame.gray, r), Mat::roi(&frame.color, r))
+                {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
