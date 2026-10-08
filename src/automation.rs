@@ -214,6 +214,21 @@ impl AdCloser {
             pending: None,
         })
     }
+
+    /// One ROI through the full pipeline: edges, gated match, tap point.
+    /// Collapses the track/regions/diagnose triple copy into short lines.
+    fn scan(&self, gray: &Mat, color: &Mat, ox: i32, oy: i32, region: &'static str) -> Option<Hit> {
+        let re = detect::canny(gray).ok()?;
+        let m = detect::match_roi(&re, gray, color, &self.pyramid).ok()??;
+        Some(Hit {
+            x: ox + m.loc.x + m.w / 2,
+            y: oy + m.loc.y + m.h / 2,
+            score: m.score,
+            region,
+            tpl: m.tpl,
+            color: m.color,
+        })
+    }
 }
 
 impl AdCloser {
@@ -227,24 +242,23 @@ impl AdCloser {
                 Mat::roi(&frame.gray, region.rect),
                 Mat::roi(&frame.color, region.rect),
             ) {
-                (Ok(g), Ok(c)) => {
-                    let roi = g.clone_pointee();
-                    let croi = c.clone_pointee();
-                    match detect::canny(&roi) {
-                        Ok(re) => match detect::match_roi(&re, &roi, &croi, &self.pyramid) {
-                        Ok(Some(m)) => (
-                            region.name.to_string(),
-                            m.score,
-                            m.tpl,
-                            m.color,
-                            region.rect.x + m.loc.x + m.w / 2,
-                            region.rect.y + m.loc.y + m.h / 2,
-                        ),
-                        _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
-                        },
-                        Err(_) => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
-                    }
-                }
+                (Ok(g), Ok(c)) => match self.scan(
+                    &g.clone_pointee(),
+                    &c.clone_pointee(),
+                    region.rect.x,
+                    region.rect.y,
+                    region.name,
+                ) {
+                    Some(m) => (
+                        region.name.to_string(),
+                        m.score,
+                        m.tpl,
+                        m.color,
+                        m.x,
+                        m.y,
+                    ),
+                    None => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                },
                 _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
             };
             out.push(entry);
@@ -289,24 +303,18 @@ impl ScreenAutomation for AdCloser {
                 if let (Ok(gview), Ok(cview)) =
                     (Mat::roi(&frame.gray, r), Mat::roi(&frame.color, r))
                 {
-                    let roi: Mat = gview.clone_pointee();
-                    let croi: Mat = cview.clone_pointee();
-                    if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some(m)) = detect::match_roi(&re, &roi, &croi, &self.pyramid) {
-                        let hit = Hit {
-                            x: r.x + m.loc.x + m.w / 2,
-                            y: r.y + m.loc.y + m.h / 2,
-                            score: m.score,
-                            region: "track",
-                            tpl: m.tpl,
-                            color: m.color,
-                        };
+                    if let Some(hit) = self.scan(
+                        &gview.clone_pointee(),
+                        &cview.clone_pointee(),
+                        r.x,
+                        r.y,
+                        "track",
+                    ) {
                         let rested = self.budget.banned(hit.x, hit.y);
                         if !rested || hit.score >= detect::STRONG_CONF {
                             self.last_hit = Some(Point::new(hit.x, hit.y));
                             self.misses = 0;
                             return Ok(Some(hit));
-                        }
                         }
                     }
                 }
@@ -323,20 +331,8 @@ impl ScreenAutomation for AdCloser {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
-            let re = match detect::canny(&roi) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            match detect::match_roi(&re, &roi, &croi, &self.pyramid) {
-                Ok(Some(m)) => {
-                    let cand = Hit {
-                        x: region.rect.x + m.loc.x + m.w / 2,
-                        y: region.rect.y + m.loc.y + m.h / 2,
-                        score: m.score,
-                        region: region.name,
-                        tpl: m.tpl,
-                        color: m.color,
-                    };
+            match self.scan(&roi, &croi, region.rect.x, region.rect.y, region.name) {
+                Some(cand) => {
                     let better = best
                         .as_ref()
                         .map(|b: &Hit| cand.score > b.score)
@@ -349,8 +345,7 @@ impl ScreenAutomation for AdCloser {
                         }
                     }
                 }
-                Ok(None) => {}
-                Err(e) => eprintln!("match err {}: {:#}", region.name, e),
+                None => {}
             }
         }
 
