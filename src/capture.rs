@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use opencv::{
     core::{self, Mat, Vector},
@@ -6,48 +7,58 @@ use opencv::{
     prelude::*,
 };
 
-// Reusable hand: screen capture. Zero disk I/O, RAM only.
-// Primary PNG (318ms on SM-E146B), fallback RAW (638ms). Color kept so the
-// detector can run Klick'r's second gate: HSV mean check on candidates.
-pub fn capture_color() -> anyhow::Result<Mat> {
-    match capture_png_color() {
-        Ok(m) => Ok(m),
-        Err(png_err) => capture_raw_color()
-            .map_err(|raw_err| anyhow::anyhow!("png: {:#} | raw: {:#}", png_err, raw_err)),
+// Reusable hand: screen capture. Zero screenshot files left behind.
+// Strategy, measured on SM-E146B (not guessed):
+//   screencap -p stdout .. 318ms (PNG encode dominates)
+//   screencap raw stdout . 638ms (10MB pipe copy dominates)
+//   screencap raw file .... 186ms flash / 163ms tmpfs (capture itself!)
+//   2x raw-file parallel  188ms total = ~94ms/frame (composer parallelizes)
+// So: a ring of in-flight `screencap <tmpfsfile>` processes, round-robin
+// wait. Steady state yields a fresh frame every ~100ms. Falls back to the
+// PNG-stdout path where tmpfs is not writable.
+const SLOTS: usize = 2;
+const TMPDIR: &str = "/dev";
+const WAIT_TIMEOUT: Duration = Duration::from_millis(3000);
+
+struct Slot {
+    path: String,
+    child: Option<Child>,
+}
+
+fn spawn_screencap(path: &str) -> anyhow::Result<Child> {
+    let _ = std::fs::remove_file(path);
+    Command::new("screencap")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("spawn screencap: {}", e))
+}
+
+fn wait_child(child: &mut Child) -> anyhow::Result<()> {
+    let t0 = Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                if status.success() {
+                    return Ok(());
+                }
+                anyhow::bail!("screencap exit {}", status);
+            }
+            None => {
+                if t0.elapsed() > WAIT_TIMEOUT {
+                    let _ = child.kill();
+                    anyhow::bail!("screencap hung");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
     }
 }
 
-pub fn to_gray(color: &Mat) -> anyhow::Result<Mat> {
-    let mut gray = Mat::default();
-    imgproc::cvt_color_def(color, &mut gray, imgproc::COLOR_BGR2GRAY)?;
-    if gray.empty() {
-        anyhow::bail!("gray empty");
-    }
-    Ok(gray)
-}
-
-fn capture_png_color() -> anyhow::Result<Mat> {
-    let out = Command::new("screencap")
-        .arg("-p")
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn screencap -p: {}", e))?;
-    if out.stdout.is_empty() {
-        anyhow::bail!("empty png stdout");
-    }
-    let buf = Vector::<u8>::from_slice(&out.stdout);
-    let m = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_COLOR)?;
-    if m.empty() {
-        anyhow::bail!("imdecode empty ({} bytes in)", out.stdout.len());
-    }
-    Ok(m)
-}
-
-// Android 15 = 16-byte header (w,h,fmt,colorspace), older = 12.
-fn capture_raw_color() -> anyhow::Result<Mat> {
-    let out = Command::new("screencap")
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn screencap: {}", e))?;
-    let b = &out.stdout;
+/// Raw RGBA bytes (12- or 16-byte header, Android 15 has 16) -> BGR Mat.
+fn raw_to_bgr(b: &[u8]) -> anyhow::Result<Mat> {
     if b.len() < 16 {
         anyhow::bail!("raw too short ({} bytes)", b.len());
     }
@@ -83,4 +94,90 @@ fn capture_raw_color() -> anyhow::Result<Mat> {
         anyhow::bail!("cvt empty");
     }
     Ok(color)
+}
+
+pub struct ScreenPump {
+    slots: Vec<Slot>,
+    cursor: usize,
+    legacy: bool,
+}
+
+impl ScreenPump {
+    pub fn new() -> Self {
+        // Probe: can we round-trip 1 byte through tmpfs?
+        let probe = format!("{}/sniper_probe", TMPDIR);
+        let legacy = std::fs::write(&probe, [1u8])
+            .and_then(|_| std::fs::read(&probe))
+            .map(|v| v != vec![1u8])
+            .unwrap_or(true);
+        let _ = std::fs::remove_file(&probe);
+        if legacy {
+            eprintln!("capture: tmpfs unavailable, PNG-stdout fallback");
+            return Self {
+                slots: Vec::new(),
+                cursor: 0,
+                legacy: true,
+            };
+        }
+        let mut slots = Vec::with_capacity(SLOTS);
+        for i in 0..SLOTS {
+            let path = format!("{}/sniper_fb{}.raw", TMPDIR, i);
+            let child = spawn_screencap(&path).ok();
+            slots.push(Slot { path, child });
+        }
+        eprintln!("capture: {}x raw-tmpfs ring", SLOTS);
+        Self {
+            slots,
+            cursor: 0,
+            legacy: false,
+        }
+    }
+
+    /// Next color frame: wait the oldest in-flight capture, respawn it.
+    pub fn next_color(&mut self) -> anyhow::Result<Mat> {
+        if self.legacy {
+            return capture_png_color();
+        }
+        let idx = self.cursor % self.slots.len();
+        self.cursor += 1;
+        let slot = &mut self.slots[idx];
+        let mut child = slot
+            .child
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("no capture process"))?;
+        let r = (|| -> anyhow::Result<Mat> {
+            wait_child(&mut child)?;
+            let bytes = std::fs::read(&slot.path)?;
+            let _ = std::fs::remove_file(&slot.path);
+            raw_to_bgr(&bytes)
+        })();
+        // Always keep the ring full, even on bad frames.
+        slot.child = spawn_screencap(&slot.path).ok();
+        r
+    }
+}
+
+pub fn to_gray(color: &Mat) -> anyhow::Result<Mat> {
+    let mut gray = Mat::default();
+    imgproc::cvt_color_def(color, &mut gray, imgproc::COLOR_BGR2GRAY)?;
+    if gray.empty() {
+        anyhow::bail!("gray empty");
+    }
+    Ok(gray)
+}
+
+fn capture_png_color() -> anyhow::Result<Mat> {
+    let out = Command::new("screencap")
+        .arg("-p")
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn screencap -p: {}", e))?;
+    if out.stdout.is_empty() {
+        anyhow::bail!("empty png stdout");
+    }
+    let buf = Vector::<u8>::from_slice(&out.stdout);
+    let m = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_COLOR)?;
+    if m.empty() {
+        anyhow::bail!("imdecode empty ({} bytes in)", out.stdout.len());
+    }
+    Ok(m)
 }

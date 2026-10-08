@@ -36,14 +36,17 @@ fn main() -> anyhow::Result<()> {
     // previous frame. Cycle becomes max(capture, detect) instead of the sum
     // (~30% faster frames on this phone). Depth 1: freshest frame wins.
     let (tx, rx) = sync_channel::<anyhow::Result<Frame>>(1);
-    std::thread::spawn(move || loop {
-        let f = (|| -> anyhow::Result<Frame> {
-            let color = capture::capture_color()?;
-            let gray = capture::to_gray(&color)?;
-            Ok(Frame { gray, color })
-        })();
-        if tx.send(f).is_err() {
-            break;
+    std::thread::spawn(move || {
+        let mut pump = capture::ScreenPump::new();
+        loop {
+            let f = (|| -> anyhow::Result<Frame> {
+                let color = pump.next_color()?;
+                let gray = capture::to_gray(&color)?;
+                Ok(Frame { gray, color })
+            })();
+            if tx.send(f).is_err() {
+                break;
+            }
         }
     });
 
