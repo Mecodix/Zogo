@@ -13,6 +13,12 @@ use automation::{AdCloser, Frame, ScreenAutomation};
 use tap::Tapper;
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    // Offline diagnosis, zero device writes: scores a saved screenshot so a
+    // miss can be debugged with evidence instead of guesses.
+    if args.len() > 1 {
+        return test_shot(&args[1]);
+    }
     let mut tapper = Tapper::new()?;
     // Multi-logic: add more automations here, first hit wins per frame.
     // Accuracy pick: Canny multi-scale template matcher. ORB is parked
@@ -77,4 +83,32 @@ fn main() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(fired_cooldown));
         }
     }
+}
+
+/// `sniper /path/shot.png`: load, scan, print per-region best
+/// (score, template, color distance, tap point). No taps, no device writes.
+fn test_shot(path: &str) -> anyhow::Result<()> {
+    use opencv::{imgcodecs, prelude::*};
+    let color = imgcodecs::imread(path, imgcodecs::IMREAD_COLOR)?;
+    if color.empty() {
+        anyhow::bail!("cannot read {}", path);
+    }
+    println!("shot: {}x{}", color.cols(), color.rows());
+    let gray = capture::to_gray(&color)?;
+    let frame = Frame { gray, color };
+    let mut job = AdCloser::new()?;
+    for (region, score, tpl, cdiff, x, y) in job.diagnose(&frame) {
+        println!(
+            "{:11} score={:.3} tpl{} color={:6.1} tap={},{}",
+            region, score, tpl, cdiff, x, y
+        );
+    }
+    match job.step(&frame)? {
+        Some(h) => println!(
+            "DECISION tap {:.3} tpl{} @ {},{} ({})",
+            h.score, h.tpl, h.x, h.y, h.region
+        ),
+        None => println!("DECISION no tap"),
+    }
+    Ok(())
 }

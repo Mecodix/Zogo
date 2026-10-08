@@ -45,8 +45,18 @@ pub struct NamedRegion {
     pub rect: Rect,
 }
 
-/// (top-left of best match, template w/h, normalized score, template id)
-pub type ScoredLoc = Option<(Point, i32, i32, f64, usize)>;
+/// Best match in a region: location, template size, shape score,
+/// template id, and the HSV color distance that passed/failed the gate.
+pub struct Scored {
+    pub loc: Point,
+    pub w: i32,
+    pub h: i32,
+    pub score: f64,
+    pub tpl: usize,
+    pub color: f64,
+}
+
+pub type ScoredLoc = Option<Scored>;
 
 // All x_template*.png crops are loaded (x_template.png, x_template1..3).
 // Synthetic X fallback only if none exist.
@@ -223,17 +233,24 @@ pub fn match_roi(roi_edges: &Mat, roi_color: &Mat, pyramid: &[Tpl]) -> anyhow::R
                 break;
             }
             let r = Rect::new(max_loc.x, max_loc.y, t.w, t.h);
-            let pass = match Mat::roi(roi_color, r) {
+            let cdiff = match Mat::roi(roi_color, r) {
                 Ok(v) => match hsv_mean(&v.clone_pointee()) {
-                    Ok(m) => color_diff(m, t.hsv) <= COLOR_MAX,
-                    Err(_) => false,
+                    Ok(m) => color_diff(m, t.hsv),
+                    Err(_) => f64::INFINITY,
                 },
-                Err(_) => false,
+                Err(_) => f64::INFINITY,
             };
-            if pass {
+            if cdiff <= COLOR_MAX {
                 if max_val > best_score {
                     best_score = max_val;
-                    best = Some((max_loc, t.w, t.h, max_val, t.tpl));
+                    best = Some(Scored {
+                        loc: max_loc,
+                        w: t.w,
+                        h: t.h,
+                        score: max_val,
+                        tpl: t.tpl,
+                        color: cdiff,
+                    });
                 }
                 if max_val >= STRONG_CONF {
                     break 'outer;

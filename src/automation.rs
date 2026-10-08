@@ -209,6 +209,43 @@ impl AdCloser {
     }
 }
 
+impl AdCloser {
+    /// Offline diagnosis: best gated match per region, for `sniper test`.
+    pub fn diagnose(&mut self, frame: &Frame) -> Vec<(String, f64, usize, f64, i32, i32)> {
+        let cols = frame.gray.cols();
+        let rows = frame.gray.rows();
+        let mut out = Vec::new();
+        for region in detect::default_regions(cols, rows) {
+            let entry = match (
+                Mat::roi(&frame.gray, region.rect),
+                Mat::roi(&frame.color, region.rect),
+            ) {
+                (Ok(g), Ok(c)) => {
+                    let roi = g.clone_pointee();
+                    let croi = c.clone_pointee();
+                    match detect::canny(&roi) {
+                        Ok(re) => match detect::match_roi(&re, &croi, &self.pyramid) {
+                            Ok(Some(m)) => (
+                                region.name.to_string(),
+                                m.score,
+                                m.tpl,
+                                m.color,
+                                region.rect.x + m.loc.x + m.w / 2,
+                                region.rect.y + m.loc.y + m.h / 2,
+                            ),
+                            _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                        },
+                        Err(_) => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                    }
+                }
+                _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+            };
+            out.push(entry);
+        }
+        out
+    }
+}
+
 impl ScreenAutomation for AdCloser {
     fn name(&self) -> &str {
         "ad_closer"
@@ -247,15 +284,13 @@ impl ScreenAutomation for AdCloser {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some((loc, w, h, s, t))) =
-                            detect::match_roi(&re, &croi, &self.pyramid)
-                        {
+                        if let Ok(Some(m)) = detect::match_roi(&re, &croi, &self.pyramid) {
                             let hit = Hit {
-                                x: r.x + loc.x + w / 2,
-                                y: r.y + loc.y + h / 2,
-                                score: s,
+                                x: r.x + m.loc.x + m.w / 2,
+                                y: r.y + m.loc.y + m.h / 2,
+                                score: m.score,
                                 region: "track",
-                                tpl: t,
+                                tpl: m.tpl,
                             };
                             if !self.budget.banned(hit.x, hit.y) {
                                 self.last_hit = Some(Point::new(hit.x, hit.y));
@@ -283,13 +318,13 @@ impl ScreenAutomation for AdCloser {
                 Err(_) => continue,
             };
             match detect::match_roi(&re, &croi, &self.pyramid) {
-                Ok(Some((loc, w, h, s, t))) => {
+                Ok(Some(m)) => {
                     let cand = Hit {
-                        x: region.rect.x + loc.x + w / 2,
-                        y: region.rect.y + loc.y + h / 2,
-                        score: s,
+                        x: region.rect.x + m.loc.x + m.w / 2,
+                        y: region.rect.y + m.loc.y + m.h / 2,
+                        score: m.score,
                         region: region.name,
-                        tpl: t,
+                        tpl: m.tpl,
                     };
                     let better = best
                         .as_ref()
