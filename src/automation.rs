@@ -15,6 +15,9 @@ pub struct Frame {
 }
 
 pub trait ScreenAutomation {
+    fn verbose_scan(&mut self, _frame: &Frame) -> String {
+        String::new()
+    }
     fn name(&self) -> &str;
     fn step(&mut self, frame: &Frame) -> anyhow::Result<Option<Hit>>;
     fn cooldown_ms(&self) -> u64;
@@ -232,6 +235,9 @@ impl AdCloser {
 }
 
 impl AdCloser {
+}
+
+impl AdCloser {
     /// Offline diagnosis: best gated match per region, for `sniper test`.
     pub fn diagnose(&mut self, frame: &Frame) -> Vec<(String, f64, usize, f64, i32, i32, String)> {
         let cols = frame.gray.cols();
@@ -284,6 +290,20 @@ impl AdCloser {
 impl ScreenAutomation for AdCloser {
     fn name(&self) -> &str {
         "ad_closer"
+    }
+
+    /// Live debug: same numbers test mode prints, per frame.
+    fn verbose_scan(&mut self, frame: &Frame) -> String {
+        self.diagnose(frame)
+            .iter()
+            .map(|(region, score, tpl, cdiff, x, y, raw)| {
+                format!(
+                    "  {:11} score={:.3} tpl{} color={:6.1} tap={},{} raw=[{}]",
+                    region, score, tpl, cdiff, x, y, raw
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn cooldown_ms(&self) -> u64 {

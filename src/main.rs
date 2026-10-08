@@ -16,8 +16,12 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     // Offline diagnosis, zero device writes: scores a saved screenshot so a
     // miss can be debugged with evidence instead of guesses.
-    if args.len() > 1 {
+    if args.len() > 1 && !args[1].starts_with('-') {
         return test_shot(&args[1]);
+    }
+    let verbose = args.iter().any(|a| a == "-v");
+    if verbose {
+        eprintln!("verbose: printing per-frame region scores (slower, debug only)");
     }
     let mut tapper = Tapper::new()?;
     // Multi-logic: add more automations here, first hit wins per frame.
@@ -75,7 +79,14 @@ fn main() -> anyhow::Result<()> {
                     fired_cooldown = job.cooldown_ms();
                     break; // one tap per frame
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    if verbose {
+                        let t = job.verbose_scan(&frame);
+                        if !t.is_empty() {
+                            eprintln!("{}", t);
+                        }
+                    }
+                }
                 Err(e) => eprintln!("job {} err: {:#}", job.name(), e),
             }
         }
