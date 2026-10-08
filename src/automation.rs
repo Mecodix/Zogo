@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use opencv::{core::Mat, core::Point, prelude::*};
 
 use crate::{
@@ -11,6 +13,54 @@ pub trait ScreenAutomation {
     fn name(&self) -> &str;
     fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>>;
     fn cooldown_ms(&self) -> u64;
+    /// Called by main after a tap actually fired, so jobs can budget spots.
+    fn note_tapped(&mut self, _x: i32, _y: i32) {}
+}
+
+// One grid cell of the screen: after MAX_TAPS_PER_CELL taps that change
+// nothing (dead countdown-X, or app chrome shaped like an X), the sniper
+// leaves that spot alone for a while instead of spamming the app UI.
+const CELL: i32 = 70;
+const MAX_TAPS_PER_CELL: u32 = 3;
+const BLACKLIST_FRAMES: u32 = 25; // ~8s at 3fps
+
+#[derive(Default)]
+struct SpotBudget {
+    cells: HashMap<(i32, i32), (u32, u32)>, // cell -> (taps, banned_frames_left)
+}
+
+impl SpotBudget {
+    fn cell_of(x: i32, y: i32) -> (i32, i32) {
+        (x.div_euclid(CELL), y.div_euclid(CELL))
+    }
+
+    fn banned(&self, x: i32, y: i32) -> bool {
+        self.cells
+            .get(&Self::cell_of(x, y))
+            .map(|&(_, b)| b > 0)
+            .unwrap_or(false)
+    }
+
+    fn tick(&mut self) {
+        self.cells.retain(|_, v| {
+            if v.1 > 0 {
+                v.1 -= 1;
+            }
+            v.0 > 0 || v.1 > 0
+        });
+        if self.cells.len() > 64 {
+            self.cells.clear();
+        }
+    }
+
+    fn note_tapped(&mut self, x: i32, y: i32) {
+        let e = self.cells.entry(Self::cell_of(x, y)).or_insert((0, 0));
+        e.0 += 1;
+        if e.0 >= MAX_TAPS_PER_CELL {
+            e.0 = 0;
+            e.1 = BLACKLIST_FRAMES;
+        }
+    }
 }
 
 // Parked alternative: ORB features (KNN k=2, Lowe 0.75, centroid tap).
@@ -131,6 +181,7 @@ pub struct AdCloser {
     pyramid: Vec<Tpl>,
     last_hit: Option<Point>,
     misses: u32,
+    budget: SpotBudget,
 }
 
 impl AdCloser {
@@ -146,6 +197,9 @@ impl AdCloser {
             pyramid,
             last_hit: None,
             misses: 0,
+            budget: SpotBudget {
+                cells: HashMap::new(),
+            },
         })
     }
 }
@@ -159,9 +213,14 @@ impl ScreenAutomation for AdCloser {
         800
     }
 
+    fn note_tapped(&mut self, x: i32, y: i32) {
+        self.budget.note_tapped(x, y);
+    }
+
     fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>> {
         let cols = gray.cols();
         let rows = gray.rows();
+        self.budget.tick();
 
         if let Some(p) = self.last_hit {
             if let Some(r) = detect::clamp_rect(
@@ -183,9 +242,11 @@ impl ScreenAutomation for AdCloser {
                                 region: "track",
                                 tpl: t,
                             };
-                            self.last_hit = Some(Point::new(hit.x, hit.y));
-                            self.misses = 0;
-                            return Ok(Some(hit));
+                            if !self.budget.banned(hit.x, hit.y) {
+                                self.last_hit = Some(Point::new(hit.x, hit.y));
+                                self.misses = 0;
+                                return Ok(Some(hit));
+                            }
                         }
                     }
                 }
@@ -228,6 +289,11 @@ impl ScreenAutomation for AdCloser {
             }
         }
 
+        if let Some(h) = &best {
+            if self.budget.banned(h.x, h.y) {
+                best = None;
+            }
+        }
         match &best {
             Some(h) => {
                 self.last_hit = Some(Point::new(h.x, h.y));

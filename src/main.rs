@@ -56,6 +56,7 @@ fn main() -> anyhow::Result<()> {
                         h.region
                     );
                     tapper.tap(h.x, h.y);
+                    job.note_tapped(h.x, h.y);
                     fired_cooldown = job.cooldown_ms();
                     break; // one tap per frame
                 }
