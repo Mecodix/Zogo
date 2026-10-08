@@ -107,6 +107,8 @@ fn main() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(fired_cooldown));
         }
     }
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 /// `sniper /path/shot.png`: load, scan, print per-region best
