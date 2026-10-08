@@ -268,31 +268,31 @@ pub fn clamp_rect(x: i32, y: i32, w: i32, h: i32, cols: i32, rows: i32) -> Optio
     Some(Rect::new(x, y, w, h))
 }
 
-// Coverage for this phone: ad X lives top corners, Play Store popups mid-right.
-// Order = likelihood. No bottom: never seen there. Fixed array, zero alloc.
+// Coverage for this phone: ad X lives top corners, Play Store popups
+// upper-middle right. Boxes overlap by 80px+ so an X straddling a boundary
+// still matches whole in one box: continuous 0..~690px on both edges.
 pub fn default_regions(cols: i32, rows: i32) -> [NamedRegion; 4] {
     let s = ((cols as f32 * 0.32) as i32).clamp(240, 420);
     let rw = s.min(cols);
-    let rh = s.min(rows);
-    // Upper-middle: Play Store popup X sits above screen middle on the right.
-    // 0.22 keeps continuity with the top boxes (which end ~345px).
-    let mid_y = ((rows as f32 * 0.22) as i32).clamp(0, (rows - rh).max(0));
+    let top_h = (s + 80).min(rows);
+    let mid_h = (s + 80).min(rows);
+    let mid_y = (s - 80).max(0).min((rows - mid_h).max(0));
     [
         NamedRegion {
             name: "top_right",
-            rect: Rect::new((cols - rw).max(0), 0, rw, rh),
+            rect: Rect::new((cols - rw).max(0), 0, rw, top_h),
         },
         NamedRegion {
             name: "top_left",
-            rect: Rect::new(0, 0, rw, rh),
+            rect: Rect::new(0, 0, rw, top_h),
         },
         NamedRegion {
             name: "mid_right",
-            rect: Rect::new((cols - rw).max(0), mid_y, rw, rh),
+            rect: Rect::new((cols - rw).max(0), mid_y, rw, mid_h),
         },
         NamedRegion {
             name: "mid_left",
-            rect: Rect::new(0, mid_y, rw, rh),
+            rect: Rect::new(0, mid_y, rw, mid_h),
         },
     ]
 }
