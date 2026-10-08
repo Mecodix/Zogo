@@ -233,10 +233,7 @@ impl AdCloser {
 
 impl AdCloser {
     /// Offline diagnosis: best gated match per region, for `sniper test`.
-    pub fn diagnose(
-        &mut self,
-        frame: &Frame,
-    ) -> Vec<(String, f64, usize, f64, i32, i32, String)> {
+    pub fn diagnose(&mut self, frame: &Frame) -> Vec<(String, f64, usize, f64, i32, i32, String)> {
         let cols = frame.gray.cols();
         let rows = frame.gray.rows();
         let mut out = Vec::new();
