@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     // (see top of file) after benchmarks showed it starves on flat icons.
     let mut jobs: Vec<Box<dyn ScreenAutomation>> = vec![Box::new(AdCloser::new()?)];
 
-    println!("sniper v4 live: {} job(s), 4 regions", jobs.len());
+    println!("sniper v5 live: {} job(s), 4 regions", jobs.len());
 
     // Capture is the floor here (~318ms PNG on SM-E146B), so no frame budget:
     // each loop costs one screencap no matter what. Back off only when the
