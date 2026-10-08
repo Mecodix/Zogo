@@ -192,7 +192,13 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
         let mut lo = Mat::default();
         let mut hi = Mat::default();
         let mut mask = Mat::default();
-        imgproc::threshold(&gray, &mut lo, mean - 25.0, 255.0, imgproc::THRESH_BINARY_INV)?;
+        imgproc::threshold(
+            &gray,
+            &mut lo,
+            mean - 25.0,
+            255.0,
+            imgproc::THRESH_BINARY_INV,
+        )?;
         imgproc::threshold(&gray, &mut hi, mean + 25.0, 255.0, imgproc::THRESH_BINARY)?;
         core::bitwise_or(&lo, &hi, &mut mask, &core::no_array())?;
         let mut mn = 0.0;
