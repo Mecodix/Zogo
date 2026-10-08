@@ -13,7 +13,10 @@ pub const CANNY_HIGH: f64 = 150.0;
 // Dual gate ported from Klick'r TemplateMatcher: shape confidence ANDed
 // with HSV color distance. Their int threshold T means conf > (100-T)/100
 // and color <= T; T=25 here -> conf > 0.75, color <= 25.
-pub const MATCH_CONF: f64 = 0.75;
+// 0.70: live frames wobble +-0.03 (video bg, animation, PNG vs JPEG).
+// Junk is contained downstream instead: HSV color gate + 3-taps-per-cell
+// budget. A strict gate here just makes borderline true X's flaky.
+pub const MATCH_CONF: f64 = 0.70;
 pub const COLOR_MAX: f64 = 25.0;
 pub const STRONG_CONF: f64 = 0.88;
 pub const MAX_CANDIDATES: i32 = 3;
@@ -38,6 +41,7 @@ pub struct Hit {
     pub score: f64,
     pub region: &'static str,
     pub tpl: usize,
+    pub color: f64,
 }
 
 pub struct NamedRegion {

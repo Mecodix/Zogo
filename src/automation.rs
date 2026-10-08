@@ -121,6 +121,7 @@ impl ScreenAutomation for OrbXCloser {
                             score: n as f64,
                             region: "track",
                             tpl: 0,
+                            color: 0.0,
                         };
                         self.last_hit = Some(Point::new(hit.x, hit.y));
                         self.misses = 0;
@@ -144,6 +145,7 @@ impl ScreenAutomation for OrbXCloser {
                         score: n as f64,
                         region: region.name,
                         tpl: 0,
+                        color: 0.0,
                     };
                     let better = best
                         .as_ref()
@@ -291,6 +293,7 @@ impl ScreenAutomation for AdCloser {
                                 score: m.score,
                                 region: "track",
                                 tpl: m.tpl,
+                                color: m.color,
                             };
                             if !self.budget.banned(hit.x, hit.y) {
                                 self.last_hit = Some(Point::new(hit.x, hit.y));
@@ -325,6 +328,7 @@ impl ScreenAutomation for AdCloser {
                         score: m.score,
                         region: region.name,
                         tpl: m.tpl,
+                        color: m.color,
                     };
                     let better = best
                         .as_ref()
