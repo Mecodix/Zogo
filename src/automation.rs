@@ -231,7 +231,7 @@ impl AdCloser {
                     let roi = g.clone_pointee();
                     let croi = c.clone_pointee();
                     match detect::canny(&roi) {
-                        Ok(re) => match detect::match_roi(&re, &croi, &self.pyramid) {
+                        Ok(re) => match detect::match_roi(&re, &roi, &croi, &self.pyramid) {
                         Ok(Some(m)) => (
                             region.name.to_string(),
                             m.score,
@@ -292,7 +292,7 @@ impl ScreenAutomation for AdCloser {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some(m)) = detect::match_roi(&re, &croi, &self.pyramid) {
+                        if let Ok(Some(m)) = detect::match_roi(&re, &roi, &croi, &self.pyramid) {
                         let hit = Hit {
                             x: r.x + m.loc.x + m.w / 2,
                             y: r.y + m.loc.y + m.h / 2,
@@ -327,7 +327,7 @@ impl ScreenAutomation for AdCloser {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            match detect::match_roi(&re, &croi, &self.pyramid) {
+            match detect::match_roi(&re, &roi, &croi, &self.pyramid) {
                 Ok(Some(m)) => {
                     let cand = Hit {
                         x: region.rect.x + m.loc.x + m.w / 2,

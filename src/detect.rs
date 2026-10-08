@@ -257,6 +257,7 @@ fn gate_candidate(roi_color: &Mat, roi_gray: &Mat, r: Rect, t: &Tpl) -> (bool, f
 
 pub fn match_roi(
     roi_edges: &Mat,
+    roi_gray: &Mat,
     roi_color: &Mat,
     pyramid: &[Tpl],
 ) -> anyhow::Result<ScoredLoc> {
