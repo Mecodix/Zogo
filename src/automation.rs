@@ -192,7 +192,6 @@ pub struct AdCloser {
     last_hit: Option<Point>,
     misses: u32,
     budget: SpotBudget,
-    use_mask: bool,
     pending: Option<(i32, i32)>,
 }
 
@@ -212,7 +211,6 @@ impl AdCloser {
             budget: SpotBudget {
                 cells: HashMap::new(),
             },
-            use_mask: true,
             pending: None,
         })
     }
@@ -232,7 +230,8 @@ impl AdCloser {
                 (Ok(g), Ok(c)) => {
                     let roi = g.clone_pointee();
                     let croi = c.clone_pointee();
-                    match detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask) {
+                    match detect::canny(&roi) {
+                        Ok(re) => match detect::match_roi(&re, &croi, &self.pyramid) {
                         Ok(Some(m)) => (
                             region.name.to_string(),
                             m.score,
@@ -242,6 +241,8 @@ impl AdCloser {
                             region.rect.y + m.loc.y + m.h / 2,
                         ),
                         _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                        },
+                        Err(_) => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
                     }
                 }
                 _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
@@ -290,9 +291,8 @@ impl ScreenAutomation for AdCloser {
                 {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
-                    if let Ok(Some(m)) =
-                        detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask)
-                    {
+                    if let Ok(re) = detect::canny(&roi) {
+                        if let Ok(Some(m)) = detect::match_roi(&re, &croi, &self.pyramid) {
                         let hit = Hit {
                             x: r.x + m.loc.x + m.w / 2,
                             y: r.y + m.loc.y + m.h / 2,
@@ -306,6 +306,7 @@ impl ScreenAutomation for AdCloser {
                             self.last_hit = Some(Point::new(hit.x, hit.y));
                             self.misses = 0;
                             return Ok(Some(hit));
+                        }
                         }
                     }
                 }
@@ -322,7 +323,11 @@ impl ScreenAutomation for AdCloser {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
-            match detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask) {
+            let re = match detect::canny(&roi) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            match detect::match_roi(&re, &croi, &self.pyramid) {
                 Ok(Some(m)) => {
                     let cand = Hit {
                         x: region.rect.x + m.loc.x + m.w / 2,

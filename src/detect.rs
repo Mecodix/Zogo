@@ -8,6 +8,8 @@ use opencv::{
 // Reusable hand: masked gray-template vision. No screen logic here.
 // Tuned for SM-E146B 1080x2408: X icons are ~28-80px, hence 7 scales.
 pub const SCALES: [f64; 7] = [0.65, 0.75, 0.85, 0.92, 1.0, 1.08, 1.15];
+pub const CANNY_LOW: f64 = 50.0;
+pub const CANNY_HIGH: f64 = 150.0;
 // Dual gate, Klick'r-style but dim-proof: shape confidence ANDed with
 // hue/saturation distance plus a brightness-CONTRAST check (not absolute
 // color-mean, which popup dim animations shift under our feet).
@@ -21,8 +23,7 @@ pub const MAX_CANDIDATES: i32 = 3;
 pub const TRACK_SIZE: i32 = 140;
 
 pub struct Tpl {
-    pub gray: Mat,
-    pub mask: Mat,
+    pub edges: Mat,
     pub w: i32,
     pub h: i32,
     pub tpl: usize,
@@ -112,6 +113,12 @@ pub fn load_templates() -> anyhow::Result<Vec<RawTemplate>> {
 }
 
 // Mean HSV of a BGR patch, channels as [H 0..180, S, V].
+pub fn canny(gray: &Mat) -> anyhow::Result<Mat> {
+    let mut edges = Mat::default();
+    imgproc::canny(gray, &mut edges, CANNY_LOW, CANNY_HIGH, 3, false)?;
+    Ok(edges)
+}
+
 pub fn hsv_mean(bgr: &Mat) -> anyhow::Result<[f64; 3]> {
     let mut hsv = Mat::default();
     imgproc::cvt_color_def(bgr, &mut hsv, imgproc::COLOR_BGR2HSV)?;
@@ -188,19 +195,7 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
         if gray.cols() < 10 || gray.rows() < 10 {
             continue;
         }
-        let mean = core::mean(&gray, &core::no_array())?[0];
-        let mut lo = Mat::default();
-        let mut hi = Mat::default();
-        let mut mask = Mat::default();
-        imgproc::threshold(
-            &gray,
-            &mut lo,
-            mean - 25.0,
-            255.0,
-            imgproc::THRESH_BINARY_INV,
-        )?;
-        imgproc::threshold(&gray, &mut hi, mean + 25.0, 255.0, imgproc::THRESH_BINARY)?;
-        core::bitwise_or(&lo, &hi, &mut mask, &core::no_array())?;
+        let edges = canny(&gray)?;
         let mut mn = 0.0;
         let mut mx = 0.0;
         core::min_max_loc(
@@ -213,13 +208,12 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
         )?;
         let hsv = hsv_mean(&color)?;
         out.push(Tpl {
-            w: gray.cols(),
-            h: gray.rows(),
+            w: edges.cols(),
+            h: edges.rows(),
             tpl: tpl_id,
             hs: [hsv[0], hsv[1]],
             grange: mx - mn,
-            gray,
-            mask,
+            edges,
         });
     }
     Ok(out)
@@ -262,10 +256,9 @@ fn gate_candidate(roi_color: &Mat, roi_gray: &Mat, r: Rect, t: &Tpl) -> (bool, f
 }
 
 pub fn match_roi(
-    roi_gray: &Mat,
+    roi_edges: &Mat,
     roi_color: &Mat,
     pyramid: &[Tpl],
-    use_mask: &mut bool,
 ) -> anyhow::Result<ScoredLoc> {
     // Masked gray matching (background in crops is ignored) + HS/contrast
     // gates per candidate + next-best loop on reject. If this OpenCV build
@@ -273,35 +266,17 @@ pub fn match_roi(
     let mut best: ScoredLoc = None;
     let mut best_score = 0.0;
     'outer: for t in pyramid {
-        if t.w > roi_gray.cols() || t.h > roi_gray.rows() {
+        if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
             continue;
         }
         let mut result = Mat::default();
-        let r = if *use_mask {
-            imgproc::match_template(roi_gray, &t.gray, &mut result, TM_CCOEFF_NORMED, &t.mask)
-        } else {
-            imgproc::match_template(
-                roi_gray,
-                &t.gray,
-                &mut result,
-                TM_CCOEFF_NORMED,
-                &core::no_array(),
-            )
-        };
-        let r = match r {
-            Err(_) if *use_mask => {
-                *use_mask = false;
-                imgproc::match_template(
-                    roi_gray,
-                    &t.gray,
-                    &mut result,
-                    TM_CCOEFF_NORMED,
-                    &core::no_array(),
-                )
-            }
-            other => other,
-        };
-        r?;
+        imgproc::match_template(
+            roi_edges,
+            &t.edges,
+            &mut result,
+            TM_CCOEFF_NORMED,
+            &core::no_array(),
+        )?;
         for _ in 0..MAX_CANDIDATES {
             let mut max_val = 0.0;
             let mut max_loc = Point::new(0, 0);

@@ -104,6 +104,9 @@ fn test_shot(path: &str) -> anyhow::Result<()> {
             region, score, tpl, cdiff, x, y
         );
     }
+    // Step twice: the stability gate deliberately holds back weak first
+    // sightings, so prime it before reading the decision.
+    let _ = job.step(&frame)?;
     match job.step(&frame)? {
         Some(h) => println!(
             "DECISION tap {:.3} tpl{} @ {},{} ({})",
