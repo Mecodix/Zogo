@@ -34,6 +34,9 @@ pub struct NamedRegion {
     pub rect: Rect,
 }
 
+/// (top-left of best match, template w/h, normalized score, template id)
+pub type ScoredLoc = Option<(Point, i32, i32, f64, usize)>;
+
 // All x_template*.png crops are loaded (x_template.png, x_template1..3).
 // Synthetic X fallback only if none exist.
 pub fn load_templates() -> anyhow::Result<Vec<Mat>> {
@@ -121,10 +124,7 @@ pub fn build_pyramid(base: &Mat, tpl_id: usize) -> anyhow::Result<Vec<Tpl>> {
     Ok(out)
 }
 
-pub fn match_roi(
-    roi_edges: &Mat,
-    pyramid: &[Tpl],
-) -> anyhow::Result<Option<(Point, i32, i32, f64, usize)>> {
+pub fn match_roi(roi_edges: &Mat, pyramid: &[Tpl]) -> anyhow::Result<ScoredLoc> {
     let mut best_score = 0.0;
     let mut best_loc = Point::new(0, 0);
     let mut best_w = 0;
