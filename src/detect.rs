@@ -13,6 +13,11 @@ pub const CANNY_HIGH: f64 = 150.0;
 // Dual gate ported from Klick'r TemplateMatcher: shape confidence ANDed
 // with HSV color distance. Their int threshold T means conf > (100-T)/100
 // and color <= T; T=25 here -> conf > 0.75, color <= 25.
+// COLOR_MAX loosened to 35: popup dim overlays animate the background shade
+// behind the X, and absolute color-mean is the fragile half of this gate.
+// Repeat junk is contained by the 3-taps-per-cell budget instead.
+pub const MATCH_CONF: f64 = 0.70;
+pub const COLOR_MAX: f64 = 35.0;
 // 0.70: live frames wobble +-0.03 (video bg, animation, PNG vs JPEG).
 // Junk is contained downstream instead: HSV color gate + 3-taps-per-cell
 // budget. A strict gate here just makes borderline true X's flaky.
