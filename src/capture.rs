@@ -68,7 +68,8 @@ fn capture_raw_gray() -> anyhow::Result<Mat> {
         dst.copy_from_slice(pixels);
     }
     let mut gray = Mat::default();
-    imgproc::cvt_color(&rgba, &mut gray, imgproc::COLOR_RGBA2GRAY, 0)?;
+    // _def form: portable across OpenCV 4.5 (4 args) and 4.11+ (5th AlgorithmHint).
+    imgproc::cvt_color_def(&rgba, &mut gray, imgproc::COLOR_RGBA2GRAY)?;
     if gray.empty() {
         anyhow::bail!("cvt empty");
     }
