@@ -47,9 +47,10 @@ fn main() -> anyhow::Result<()> {
             match job.step(&gray) {
                 Ok(Some(h)) => {
                     eprintln!(
-                        "hit [{}] {:.3} @ {},{} ({})",
+                        "hit [{}] {:.3} tpl{} @ {},{} ({})",
                         job.name(),
                         h.score,
+                        h.tpl,
                         h.x,
                         h.y,
                         h.region

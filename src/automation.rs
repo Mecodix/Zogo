@@ -65,6 +65,7 @@ impl ScreenAutomation for OrbXCloser {
                             y: r.y + pt.y,
                             score: n as f64,
                             region: "track",
+                            tpl: 0,
                         };
                         self.last_hit = Some(Point::new(hit.x, hit.y));
                         self.misses = 0;
@@ -87,6 +88,7 @@ impl ScreenAutomation for OrbXCloser {
                         y: region.rect.y + pt.y,
                         score: n as f64,
                         region: region.name,
+                        tpl: 0,
                     };
                     let better = best
                         .as_ref()
@@ -133,8 +135,10 @@ pub struct AdCloser {
 
 impl AdCloser {
     pub fn new() -> anyhow::Result<Self> {
-        let base = detect::load_template_gray("x_template.png")?;
-        let pyramid = detect::build_pyramid(&base)?;
+        let mut pyramid = Vec::new();
+        for (i, base) in detect::load_templates()?.iter().enumerate() {
+            pyramid.extend(detect::build_pyramid(base, i)?);
+        }
         if pyramid.is_empty() {
             anyhow::bail!("empty pyramid");
         }
@@ -152,7 +156,7 @@ impl ScreenAutomation for AdCloser {
     }
 
     fn cooldown_ms(&self) -> u64 {
-        1200
+        800
     }
 
     fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>> {
@@ -171,12 +175,13 @@ impl ScreenAutomation for AdCloser {
                 if let Ok(roi_view) = Mat::roi(gray, r) {
                     let roi: Mat = roi_view.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some((loc, w, h, s))) = detect::match_roi(&re, &self.pyramid) {
+                        if let Ok(Some((loc, w, h, s, t))) = detect::match_roi(&re, &self.pyramid) {
                             let hit = Hit {
                                 x: r.x + loc.x + w / 2,
                                 y: r.y + loc.y + h / 2,
                                 score: s,
                                 region: "track",
+                                tpl: t,
                             };
                             self.last_hit = Some(Point::new(hit.x, hit.y));
                             self.misses = 0;
@@ -198,12 +203,13 @@ impl ScreenAutomation for AdCloser {
                 Err(_) => continue,
             };
             match detect::match_roi(&re, &self.pyramid) {
-                Ok(Some((loc, w, h, s))) => {
+                Ok(Some((loc, w, h, s, t))) => {
                     let cand = Hit {
                         x: region.rect.x + loc.x + w / 2,
                         y: region.rect.y + loc.y + h / 2,
                         score: s,
                         region: region.name,
+                        tpl: t,
                     };
                     let better = best
                         .as_ref()

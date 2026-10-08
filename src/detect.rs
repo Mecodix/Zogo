@@ -18,6 +18,7 @@ pub struct Tpl {
     pub edges: Mat,
     pub w: i32,
     pub h: i32,
+    pub tpl: usize,
 }
 
 pub struct Hit {
@@ -25,11 +26,36 @@ pub struct Hit {
     pub y: i32,
     pub score: f64,
     pub region: &'static str,
+    pub tpl: usize,
 }
 
 pub struct NamedRegion {
     pub name: &'static str,
     pub rect: Rect,
+}
+
+// All x_template*.png crops are loaded (x_template.png, x_template1..3).
+// Synthetic X fallback only if none exist.
+pub fn load_templates() -> anyhow::Result<Vec<Mat>> {
+    let mut v = Vec::new();
+    for name in [
+        "x_template.png",
+        "x_template1.png",
+        "x_template2.png",
+        "x_template3.png",
+    ] {
+        if let Ok(m) = imgcodecs::imread(name, imgcodecs::IMREAD_GRAYSCALE) {
+            if !m.empty() {
+                eprintln!("template {}: {}x{}", name, m.cols(), m.rows());
+                v.push(m);
+            }
+        }
+    }
+    if v.is_empty() {
+        eprintln!("no template files, synthetic fallback");
+        v.push(load_template_gray("x_template.png")?);
+    }
+    Ok(v)
 }
 
 pub fn load_template_gray(path: &str) -> anyhow::Result<Mat> {
@@ -68,8 +94,8 @@ pub fn canny(gray: &Mat) -> anyhow::Result<Mat> {
     Ok(edges)
 }
 
-// Precompute once at startup: 5x less work per frame.
-pub fn build_pyramid(base: &Mat) -> anyhow::Result<Vec<Tpl>> {
+// Precompute once at startup: 5 scales per template, best wins per frame.
+pub fn build_pyramid(base: &Mat, tpl_id: usize) -> anyhow::Result<Vec<Tpl>> {
     let mut out = Vec::with_capacity(SCALES.len());
     for &s in &SCALES {
         let mut resized = Mat::default();
@@ -88,6 +114,7 @@ pub fn build_pyramid(base: &Mat) -> anyhow::Result<Vec<Tpl>> {
         out.push(Tpl {
             w: edges.cols(),
             h: edges.rows(),
+            tpl: tpl_id,
             edges,
         });
     }
@@ -97,11 +124,12 @@ pub fn build_pyramid(base: &Mat) -> anyhow::Result<Vec<Tpl>> {
 pub fn match_roi(
     roi_edges: &Mat,
     pyramid: &[Tpl],
-) -> anyhow::Result<Option<(Point, i32, i32, f64)>> {
+) -> anyhow::Result<Option<(Point, i32, i32, f64, usize)>> {
     let mut best_score = 0.0;
     let mut best_loc = Point::new(0, 0);
     let mut best_w = 0;
     let mut best_h = 0;
+    let mut best_tpl = 0;
     for t in pyramid {
         if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
             continue;
@@ -129,13 +157,14 @@ pub fn match_roi(
             best_loc = max_loc;
             best_w = t.w;
             best_h = t.h;
+            best_tpl = t.tpl;
             if best_score >= STRONG_HIT {
                 break;
             }
         }
     }
     if best_score >= MATCH_THRESH {
-        Ok(Some((best_loc, best_w, best_h, best_score)))
+        Ok(Some((best_loc, best_w, best_h, best_score, best_tpl)))
     } else {
         Ok(None)
     }
