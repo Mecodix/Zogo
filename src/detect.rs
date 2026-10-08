@@ -101,7 +101,7 @@ pub fn load_templates() -> anyhow::Result<Vec<RawTemplate>> {
 pub fn hsv_mean(bgr: &Mat) -> anyhow::Result<[f64; 3]> {
     let mut hsv = Mat::default();
     imgproc::cvt_color_def(bgr, &mut hsv, imgproc::COLOR_BGR2HSV)?;
-    let m = core::mean(&hsv)?;
+    let m = core::mean(&hsv, &core::no_array())?;
     Ok([m[0], m[1], m[2]])
 }
 

@@ -112,7 +112,7 @@ impl ScreenAutomation for OrbXCloser {
                 cols,
                 rows,
             ) {
-                if let Ok(roi_view) = Mat::roi(frame.gray, r) {
+                if let Ok(roi_view) = Mat::roi(&frame.gray, r) {
                     let roi: Mat = roi_view.clone_pointee();
                     if let Ok(Some((pt, n))) = self.orb.match_roi(&roi) {
                         let hit = Hit {
@@ -132,7 +132,7 @@ impl ScreenAutomation for OrbXCloser {
 
         let mut best: Option<Hit> = None;
         for region in detect::default_regions(cols, rows) {
-            let roi: Mat = match Mat::roi(frame.gray, region.rect) {
+            let roi: Mat = match Mat::roi(&frame.gray, region.rect) {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
@@ -236,7 +236,7 @@ impl ScreenAutomation for AdCloser {
                 cols,
                 rows,
             ) {
-                if let (Ok(gview), Ok(cview)) = (Mat::roi(frame.gray, r), Mat::roi(frame.color, r)) {
+                if let (Ok(gview), Ok(cview)) = (Mat::roi(&frame.gray, r), Mat::roi(&frame.color, r)) {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
@@ -263,11 +263,11 @@ impl ScreenAutomation for AdCloser {
 
         let mut best: Option<Hit> = None;
         for region in detect::default_regions(cols, rows) {
-            let roi: Mat = match Mat::roi(frame.gray, region.rect) {
+            let roi: Mat = match Mat::roi(&frame.gray, region.rect) {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
-            let croi: Mat = match Mat::roi(frame.color, region.rect) {
+            let croi: Mat = match Mat::roi(&frame.color, region.rect) {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
