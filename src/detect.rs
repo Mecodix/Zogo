@@ -5,34 +5,29 @@ use opencv::{
     prelude::*,
 };
 
-// Reusable hand: edge-template vision. No screen logic here.
-// Tuned for SM-E146B 1080x2408: X icons are ~48-80px, hence 64px base.
+// Reusable hand: masked gray-template vision. No screen logic here.
+// Tuned for SM-E146B 1080x2408: X icons are ~28-80px, hence 7 scales.
 pub const SCALES: [f64; 7] = [0.65, 0.75, 0.85, 0.92, 1.0, 1.08, 1.15];
-pub const CANNY_LOW: f64 = 50.0;
-pub const CANNY_HIGH: f64 = 150.0;
-// Dual gate ported from Klick'r TemplateMatcher: shape confidence ANDed
-// with HSV color distance. Their int threshold T means conf > (100-T)/100
-// and color <= T; T=25 here -> conf > 0.75, color <= 25.
-// COLOR_MAX loosened to 35: popup dim overlays animate the background shade
-// behind the X, and absolute color-mean is the fragile half of this gate.
-// Repeat junk is contained by the 3-taps-per-cell budget instead.
-pub const MATCH_CONF: f64 = 0.70;
-pub const COLOR_MAX: f64 = 35.0;
-// 0.70: live frames wobble +-0.03 (video bg, animation, PNG vs JPEG).
-// Junk is contained downstream instead: HSV color gate + 3-taps-per-cell
-// budget. A strict gate here just makes borderline true X's flaky.
-pub const MATCH_CONF: f64 = 0.70;
-pub const COLOR_MAX: f64 = 25.0;
-pub const STRONG_CONF: f64 = 0.88;
+// Dual gate, Klick'r-style but dim-proof: shape confidence ANDed with
+// hue/saturation distance plus a brightness-CONTRAST check (not absolute
+// color-mean, which popup dim animations shift under our feet).
+// 0.80 is safe only with the mask: background stops diluting true scores,
+// so real X's clear it while junk stays buried.
+pub const MATCH_CONF: f64 = 0.80;
+pub const HS_MAX: f64 = 15.0;
+pub const CONTRAST_RATIO: f64 = 0.5;
+pub const STRONG_CONF: f64 = 0.90;
 pub const MAX_CANDIDATES: i32 = 3;
 pub const TRACK_SIZE: i32 = 140;
 
 pub struct Tpl {
-    pub edges: Mat,
+    pub gray: Mat,
+    pub mask: Mat,
     pub w: i32,
     pub h: i32,
     pub tpl: usize,
-    pub hsv: [f64; 3],
+    pub hs: [f64; 2],
+    pub grange: f64,
 }
 
 pub struct RawTemplate {
@@ -124,15 +119,16 @@ pub fn hsv_mean(bgr: &Mat) -> anyhow::Result<[f64; 3]> {
     Ok([m[0], m[1], m[2]])
 }
 
-// Klick'r getColorDiff: circular H distance, linear S/V, mean on 0..100.
-pub fn color_diff(a: [f64; 3], b: [f64; 3]) -> f64 {
+// Dim-proof gate: hue/saturation distance only (dimming lives in V,
+// grays carry no hue). Plus a brightness-CONTRAST check: an icon patch
+// always spans glyph-vs-background tones; flat junk does not.
+pub fn hs_diff(a: [f64; 2], b: [f64; 2]) -> f64 {
     let mut h = (a[0] - b[0]).abs();
     if h > 90.0 {
         h = 180.0 - h;
     }
     let s = (a[1] - b[1]).abs();
-    let v = (a[2] - b[2]).abs();
-    ((h / 90.0) + (s / 255.0) + (v / 255.0)) * (100.0 / 3.0)
+    ((h / 90.0) + (s / 255.0)) * 50.0
 }
 
 pub fn load_template_gray(path: &str) -> anyhow::Result<Mat> {
@@ -165,21 +161,17 @@ pub fn load_template_gray(path: &str) -> anyhow::Result<Mat> {
     Ok(m)
 }
 
-pub fn canny(gray: &Mat) -> anyhow::Result<Mat> {
-    let mut edges = Mat::default();
-    imgproc::canny(gray, &mut edges, CANNY_LOW, CANNY_HIGH, 3, false)?;
-    Ok(edges)
-}
-
-// Precompute once at startup: 5 scales per template, best wins per frame.
+// Precompute once at startup: per scale, the gray template, a binary mask
+// of its glyph pixels (deviants from the mean: background baked into crops
+// is ignored at match time), plus HS mean and brightness range for gates.
 pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl>> {
     let mut out = Vec::with_capacity(SCALES.len());
     for &s in &SCALES {
-        let mut resized_gray = Mat::default();
-        let mut resized_color = Mat::default();
+        let mut gray = Mat::default();
+        let mut color = Mat::default();
         imgproc::resize(
             &raw.gray,
-            &mut resized_gray,
+            &mut gray,
             Size::new(0, 0),
             s,
             s,
@@ -187,46 +179,123 @@ pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl
         )?;
         imgproc::resize(
             &raw.color,
-            &mut resized_color,
+            &mut color,
             Size::new(0, 0),
             s,
             s,
             imgproc::INTER_LINEAR,
         )?;
-        if resized_gray.cols() < 10 || resized_gray.rows() < 10 {
+        if gray.cols() < 10 || gray.rows() < 10 {
             continue;
         }
-        let edges = canny(&resized_gray)?;
-        let hsv = hsv_mean(&resized_color)?;
+        let mean = core::mean(&gray, &core::no_array())?[0];
+        let mut lo = Mat::default();
+        let mut hi = Mat::default();
+        let mut mask = Mat::default();
+        imgproc::threshold(&gray, &mut lo, mean - 25.0, 255.0, imgproc::THRESH_BINARY_INV)?;
+        imgproc::threshold(&gray, &mut hi, mean + 25.0, 255.0, imgproc::THRESH_BINARY)?;
+        core::bitwise_or(&lo, &hi, &mut mask)?;
+        let mut mn = 0.0;
+        let mut mx = 0.0;
+        core::min_max_loc(
+            &gray,
+            Some(&mut mn),
+            Some(&mut mx),
+            None,
+            None,
+            &core::no_array(),
+        )?;
+        let hsv = hsv_mean(&color)?;
         out.push(Tpl {
-            w: edges.cols(),
-            h: edges.rows(),
+            w: gray.cols(),
+            h: gray.rows(),
             tpl: tpl_id,
-            hsv,
-            edges,
+            hs: [hsv[0], hsv[1]],
+            grange: mx - mn,
+            gray,
+            mask,
         });
     }
     Ok(out)
 }
 
-pub fn match_roi(roi_edges: &Mat, roi_color: &Mat, pyramid: &[Tpl]) -> anyhow::Result<ScoredLoc> {
-    // Klick'r parseMatchingResult port: per scale, take the best peak; if the
-    // HSV color gate rejects it, suppress that area and try the NEXT peak
-    // (up to MAX_CANDIDATES) instead of trusting the global max blindly.
+// Candidate gate: HS distance tight, brightness range (contrast) present.
+// Returns (pass, hs_distance). V is deliberately ignored: dim overlays and
+// countdown fades shift brightness, never hue.
+fn gate_candidate(roi_color: &Mat, roi_gray: &Mat, r: Rect, t: &Tpl) -> (bool, f64) {
+    let hs = match Mat::roi(roi_color, r) {
+        Ok(v) => match hsv_mean(&v.clone_pointee()) {
+            Ok(m) => hs_diff([m[0], m[1]], t.hs),
+            Err(_) => return (false, f64::INFINITY),
+        },
+        Err(_) => return (false, f64::INFINITY),
+    };
+    if hs > HS_MAX {
+        return (false, hs);
+    }
+    let range = match Mat::roi(roi_gray, r) {
+        Ok(v) => {
+            let g = v.clone_pointee();
+            let mut mn = 0.0;
+            let mut mx = 0.0;
+            match core::min_max_loc(
+                &g,
+                Some(&mut mn),
+                Some(&mut mx),
+                None,
+                None,
+                &core::no_array(),
+            ) {
+                Ok(()) => mx - mn,
+                Err(_) => return (false, hs),
+            }
+        }
+        Err(_) => return (false, hs),
+    };
+    (range >= CONTRAST_RATIO * t.grange, hs)
+}
+
+pub fn match_roi(
+    roi_gray: &Mat,
+    roi_color: &Mat,
+    pyramid: &[Tpl],
+    use_mask: &mut bool,
+) -> anyhow::Result<ScoredLoc> {
+    // Masked gray matching (background in crops is ignored) + HS/contrast
+    // gates per candidate + next-best loop on reject. If this OpenCV build
+    // rejects masked CCOEFF_NORMED, fall back to unmasked once and remember.
     let mut best: ScoredLoc = None;
     let mut best_score = 0.0;
     'outer: for t in pyramid {
-        if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
+        if t.w > roi_gray.cols() || t.h > roi_gray.rows() {
             continue;
         }
         let mut result = Mat::default();
-        imgproc::match_template(
-            roi_edges,
-            &t.edges,
-            &mut result,
-            TM_CCOEFF_NORMED,
-            &core::no_array(),
-        )?;
+        let r = if *use_mask {
+            imgproc::match_template(roi_gray, &t.gray, &mut result, TM_CCOEFF_NORMED, &t.mask)
+        } else {
+            imgproc::match_template(
+                roi_gray,
+                &t.gray,
+                &mut result,
+                TM_CCOEFF_NORMED,
+                &core::no_array(),
+            )
+        };
+        let r = match r {
+            Err(_) if *use_mask => {
+                *use_mask = false;
+                imgproc::match_template(
+                    roi_gray,
+                    &t.gray,
+                    &mut result,
+                    TM_CCOEFF_NORMED,
+                    &core::no_array(),
+                )
+            }
+            other => other,
+        };
+        r?;
         for _ in 0..MAX_CANDIDATES {
             let mut max_val = 0.0;
             let mut max_loc = Point::new(0, 0);
@@ -242,14 +311,8 @@ pub fn match_roi(roi_edges: &Mat, roi_color: &Mat, pyramid: &[Tpl]) -> anyhow::R
                 break;
             }
             let r = Rect::new(max_loc.x, max_loc.y, t.w, t.h);
-            let cdiff = match Mat::roi(roi_color, r) {
-                Ok(v) => match hsv_mean(&v.clone_pointee()) {
-                    Ok(m) => color_diff(m, t.hsv),
-                    Err(_) => f64::INFINITY,
-                },
-                Err(_) => f64::INFINITY,
-            };
-            if cdiff <= COLOR_MAX {
+            let (pass, hs) = gate_candidate(roi_color, roi_gray, r, t);
+            if pass {
                 if max_val > best_score {
                     best_score = max_val;
                     best = Some(Scored {
@@ -258,7 +321,7 @@ pub fn match_roi(roi_edges: &Mat, roi_color: &Mat, pyramid: &[Tpl]) -> anyhow::R
                         h: t.h,
                         score: max_val,
                         tpl: t.tpl,
-                        color: cdiff,
+                        color: hs,
                     });
                 }
                 if max_val >= STRONG_CONF {

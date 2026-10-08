@@ -25,6 +25,9 @@ pub trait ScreenAutomation {
 // One grid cell of the screen: after MAX_TAPS_PER_CELL taps that change
 // nothing (dead countdown-X, or app chrome shaped like an X), the sniper
 // leaves that spot alone for a while instead of spamming the app UI.
+// Weak first sightings on a new spot must repeat next frame (kills
+// mid-animation taps that land on the ad body and open browsers).
+const STABILITY_CONF: f64 = 0.85;
 const CELL: i32 = 70;
 const MAX_TAPS_PER_CELL: u32 = 3;
 const BLACKLIST_FRAMES: u32 = 25; // ~8s at 3fps
@@ -189,6 +192,8 @@ pub struct AdCloser {
     last_hit: Option<Point>,
     misses: u32,
     budget: SpotBudget,
+    use_mask: bool,
+    pending: Option<(i32, i32)>,
 }
 
 impl AdCloser {
@@ -207,6 +212,8 @@ impl AdCloser {
             budget: SpotBudget {
                 cells: HashMap::new(),
             },
+            use_mask: true,
+            pending: None,
         })
     }
 }
@@ -225,19 +232,16 @@ impl AdCloser {
                 (Ok(g), Ok(c)) => {
                     let roi = g.clone_pointee();
                     let croi = c.clone_pointee();
-                    match detect::canny(&roi) {
-                        Ok(re) => match detect::match_roi(&re, &croi, &self.pyramid) {
-                            Ok(Some(m)) => (
-                                region.name.to_string(),
-                                m.score,
-                                m.tpl,
-                                m.color,
-                                region.rect.x + m.loc.x + m.w / 2,
-                                region.rect.y + m.loc.y + m.h / 2,
-                            ),
-                            _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
-                        },
-                        Err(_) => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                    match detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask) {
+                        Ok(Some(m)) => (
+                            region.name.to_string(),
+                            m.score,
+                            m.tpl,
+                            m.color,
+                            region.rect.x + m.loc.x + m.w / 2,
+                            region.rect.y + m.loc.y + m.h / 2,
+                        ),
+                        _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
                     }
                 }
                 _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
@@ -259,6 +263,7 @@ impl ScreenAutomation for AdCloser {
 
     fn note_tapped(&mut self, x: i32, y: i32) {
         self.budget.note_tapped(x, y);
+        self.pending = None;
         // Freshly rested cell + stale track = instant re-tap loop on app
         // chrome. Drop tracking so the next hit must re-prove itself.
         if self.budget.banned(x, y) {
@@ -285,21 +290,22 @@ impl ScreenAutomation for AdCloser {
                 {
                     let roi: Mat = gview.clone_pointee();
                     let croi: Mat = cview.clone_pointee();
-                    if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some(m)) = detect::match_roi(&re, &croi, &self.pyramid) {
-                            let hit = Hit {
-                                x: r.x + m.loc.x + m.w / 2,
-                                y: r.y + m.loc.y + m.h / 2,
-                                score: m.score,
-                                region: "track",
-                                tpl: m.tpl,
-                                color: m.color,
-                            };
-                            if !self.budget.banned(hit.x, hit.y) {
-                                self.last_hit = Some(Point::new(hit.x, hit.y));
-                                self.misses = 0;
-                                return Ok(Some(hit));
-                            }
+                    if let Ok(Some(m)) =
+                        detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask)
+                    {
+                        let hit = Hit {
+                            x: r.x + m.loc.x + m.w / 2,
+                            y: r.y + m.loc.y + m.h / 2,
+                            score: m.score,
+                            region: "track",
+                            tpl: m.tpl,
+                            color: m.color,
+                        };
+                        let rested = self.budget.banned(hit.x, hit.y);
+                        if !rested || hit.score >= detect::STRONG_CONF {
+                            self.last_hit = Some(Point::new(hit.x, hit.y));
+                            self.misses = 0;
+                            return Ok(Some(hit));
                         }
                     }
                 }
@@ -316,11 +322,7 @@ impl ScreenAutomation for AdCloser {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
-            let re = match detect::canny(&roi) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            match detect::match_roi(&re, &croi, &self.pyramid) {
+            match detect::match_roi(&roi, &croi, &self.pyramid, &mut self.use_mask) {
                 Ok(Some(m)) => {
                     let cand = Hit {
                         x: region.rect.x + m.loc.x + m.w / 2,
@@ -347,25 +349,44 @@ impl ScreenAutomation for AdCloser {
             }
         }
 
-        if let Some(h) = &best {
-            if self.budget.banned(h.x, h.y) {
-                best = None;
-            }
-        }
-        match &best {
-            Some(h) => {
+        // Arbitration, cheapest proof first: rested cells stay resting
+        // unless very confident (a real X may spawn where junk lived);
+        // weak first sightings on a new spot must repeat next frame.
+        let mut fire: Option<Hit> = None;
+        if let Some(h) = best {
+            let tracked = self
+                .last_hit
+                .map(|p| (p.x - h.x).abs() < 40 && (p.y - h.y).abs() < 40)
+                .unwrap_or(false);
+            if self.budget.banned(h.x, h.y) && h.score < detect::STRONG_CONF {
+                self.misses += 1;
+            } else if !tracked && h.score < STABILITY_CONF {
+                let seen = self
+                    .pending
+                    .map(|(px, py)| (px - h.x).abs() < 40 && (py - h.y).abs() < 40)
+                    .unwrap_or(false);
+                if seen {
+                    self.pending = None;
+                    self.last_hit = Some(Point::new(h.x, h.y));
+                    self.misses = 0;
+                    fire = Some(h);
+                } else {
+                    self.pending = Some((h.x, h.y));
+                    self.misses += 1;
+                }
+            } else {
                 self.last_hit = Some(Point::new(h.x, h.y));
                 self.misses = 0;
+                fire = Some(h);
             }
-            None => {
-                self.misses += 1;
-                if self.misses >= 5 {
-                    self.last_hit = None;
-                    self.misses = 0;
-                }
-            }
+        } else {
+            self.misses += 1;
         }
-        Ok(best)
+        if self.misses >= 5 {
+            self.last_hit = None;
+            self.misses = 0;
+        }
+        Ok(fire)
     }
 }
 
