@@ -249,14 +249,7 @@ impl AdCloser {
                     region.rect.y,
                     region.name,
                 ) {
-                    Some(m) => (
-                        region.name.to_string(),
-                        m.score,
-                        m.tpl,
-                        m.color,
-                        m.x,
-                        m.y,
-                    ),
+                    Some(m) => (region.name.to_string(), m.score, m.tpl, m.color, m.x, m.y),
                     None => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
                 },
                 _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
