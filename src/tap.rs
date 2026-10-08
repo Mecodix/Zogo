@@ -35,7 +35,17 @@ struct DirectTap {
 
 impl DirectTap {
     fn open() -> anyhow::Result<Self> {
-        let f = OpenOptions::new().write(true).open(TOUCH_DEV)?;
+        let mut f = OpenOptions::new().write(true).open(TOUCH_DEV)?;
+        // A run killed mid-tap (Ctrl+C inside the 60ms hold) leaves the
+        // kernel thinking a finger is still down -> ghost touches. Release
+        // every slot on startup so we always begin from a clean slate.
+        for slot in 0..10 {
+            let _ = ev_write(&mut f, EV_ABS, ABS_MT_SLOT, slot);
+            let _ = ev_write(&mut f, EV_ABS, ABS_MT_TRACKING_ID, -1);
+        }
+        let _ = ev_write(&mut f, EV_KEY, BTN_TOUCH, 0);
+        let _ = ev_write(&mut f, EV_SYN, SYN_REPORT, 0);
+        let _ = f.flush();
         Ok(Self { f, next_id: 1 })
     }
 
