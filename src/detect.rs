@@ -255,6 +255,50 @@ fn gate_candidate(roi_color: &Mat, roi_gray: &Mat, r: Rect, t: &Tpl) -> (bool, f
     (range >= CONTRAST_RATIO * t.grange, hs)
 }
 
+/// Raw shape scores per template id, no gates: diagnostic only.
+/// Shows whether a miss is shape (low score) or gates (score ok, vetoed).
+pub fn raw_scores(roi_edges: &Mat, pyramid: &[Tpl]) -> Vec<(usize, f64)> {
+    let mut per_tpl: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+    for t in pyramid {
+        if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
+            continue;
+        }
+        let mut result = Mat::default();
+        if imgproc::match_template(
+            roi_edges,
+            &t.edges,
+            &mut result,
+            TM_CCOEFF_NORMED,
+            &core::no_array(),
+        )
+        .is_err()
+        {
+            continue;
+        }
+        let mut max_val = 0.0;
+        let mut max_loc = Point::new(0, 0);
+        if core::min_max_loc(
+            &result,
+            None,
+            Some(&mut max_val),
+            None,
+            Some(&mut max_loc),
+            &core::no_array(),
+        )
+        .is_err()
+        {
+            continue;
+        }
+        let e = per_tpl.entry(t.tpl).or_insert(0.0);
+        if max_val > *e {
+            *e = max_val;
+        }
+    }
+    let mut v: Vec<(usize, f64)> = per_tpl.into_iter().collect();
+    v.sort_by_key(|&(tpl, _)| tpl);
+    v
+}
+
 pub fn match_roi(
     roi_edges: &Mat,
     roi_gray: &Mat,

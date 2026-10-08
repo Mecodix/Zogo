@@ -233,7 +233,10 @@ impl AdCloser {
 
 impl AdCloser {
     /// Offline diagnosis: best gated match per region, for `sniper test`.
-    pub fn diagnose(&mut self, frame: &Frame) -> Vec<(String, f64, usize, f64, i32, i32)> {
+    pub fn diagnose(
+        &mut self,
+        frame: &Frame,
+    ) -> Vec<(String, f64, usize, f64, i32, i32, String)> {
         let cols = frame.gray.cols();
         let rows = frame.gray.rows();
         let mut out = Vec::new();
@@ -242,17 +245,38 @@ impl AdCloser {
                 Mat::roi(&frame.gray, region.rect),
                 Mat::roi(&frame.color, region.rect),
             ) {
-                (Ok(g), Ok(c)) => match self.scan(
-                    &g.clone_pointee(),
-                    &c.clone_pointee(),
-                    region.rect.x,
-                    region.rect.y,
-                    region.name,
-                ) {
-                    Some(m) => (region.name.to_string(), m.score, m.tpl, m.color, m.x, m.y),
-                    None => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
-                },
-                _ => (region.name.to_string(), 0.0, 99, 999.0, -1, -1),
+                (Ok(g), Ok(c)) => {
+                    let roi = g.clone_pointee();
+                    let croi = c.clone_pointee();
+                    let raw = detect::canny(&roi)
+                        .map(|re| detect::raw_scores(&re, &self.pyramid))
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|(t, v)| format!("t{}:{:.2}", t, v))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    match self.scan(&roi, &croi, region.rect.x, region.rect.y, region.name) {
+                        Some(m) => (
+                            region.name.to_string(),
+                            m.score,
+                            m.tpl,
+                            m.color,
+                            m.x,
+                            m.y,
+                            raw,
+                        ),
+                        None => (region.name.to_string(), 0.0, 99, 999.0, -1, -1, raw),
+                    }
+                }
+                _ => (
+                    region.name.to_string(),
+                    0.0,
+                    99,
+                    999.0,
+                    -1,
+                    -1,
+                    String::new(),
+                ),
             };
             out.push(entry);
         }

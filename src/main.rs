@@ -98,10 +98,10 @@ fn test_shot(path: &str) -> anyhow::Result<()> {
     let gray = capture::to_gray(&color)?;
     let frame = Frame { gray, color };
     let mut job = AdCloser::new()?;
-    for (region, score, tpl, cdiff, x, y) in job.diagnose(&frame) {
+    for (region, score, tpl, cdiff, x, y, raw) in job.diagnose(&frame) {
         println!(
-            "{:11} score={:.3} tpl{} color={:6.1} tap={},{}",
-            region, score, tpl, cdiff, x, y
+            "{:11} score={:.3} tpl{} color={:6.1} tap={},{} raw=[{}]",
+            region, score, tpl, cdiff, x, y, raw
         );
     }
     // Step twice: the stability gate deliberately holds back weak first
