@@ -10,10 +10,13 @@ use opencv::{
 pub const SCALES: [f64; 5] = [0.85, 0.92, 1.0, 1.08, 1.15];
 pub const CANNY_LOW: f64 = 50.0;
 pub const CANNY_HIGH: f64 = 150.0;
-// 0.75: device logs show true X at 0.83+, false positives at ~0.65.
-// Lenient thresholds tap static UI chrome; strict ones only fire on the ad.
-pub const MATCH_THRESH: f64 = 0.75;
-pub const STRONG_HIT: f64 = 0.78;
+// Dual gate ported from Klick'r TemplateMatcher: shape confidence ANDed
+// with HSV color distance. Their int threshold T means conf > (100-T)/100
+// and color <= T; T=25 here -> conf > 0.75, color <= 25.
+pub const MATCH_CONF: f64 = 0.75;
+pub const COLOR_MAX: f64 = 25.0;
+pub const STRONG_CONF: f64 = 0.88;
+pub const MAX_CANDIDATES: i32 = 3;
 pub const TRACK_SIZE: i32 = 140;
 
 pub struct Tpl {
@@ -21,6 +24,12 @@ pub struct Tpl {
     pub w: i32,
     pub h: i32,
     pub tpl: usize,
+    pub hsv: [f64; 3],
+}
+
+pub struct RawTemplate {
+    pub gray: Mat,
+    pub color: Mat,
 }
 
 pub struct Hit {
@@ -41,7 +50,7 @@ pub type ScoredLoc = Option<(Point, i32, i32, f64, usize)>;
 
 // All x_template*.png crops are loaded (x_template.png, x_template1..3).
 // Synthetic X fallback only if none exist.
-pub fn load_templates() -> anyhow::Result<Vec<Mat>> {
+pub fn load_templates() -> anyhow::Result<Vec<RawTemplate>> {
     let mut v = Vec::new();
     for name in [
         "x_template.png",
@@ -53,18 +62,58 @@ pub fn load_templates() -> anyhow::Result<Vec<Mat>> {
         if !std::path::Path::new(name).exists() {
             continue;
         }
-        if let Ok(m) = imgcodecs::imread(name, imgcodecs::IMREAD_GRAYSCALE) {
-            if !m.empty() {
-                eprintln!("template {}: {}x{}", name, m.cols(), m.rows());
-                v.push(m);
-            }
+        let gray = imgcodecs::imread(name, imgcodecs::IMREAD_GRAYSCALE)?;
+        let color = imgcodecs::imread(name, imgcodecs::IMREAD_COLOR)?;
+        if !gray.empty() && !color.empty() {
+            eprintln!("template {}: {}x{}", name, gray.cols(), gray.rows());
+            v.push(RawTemplate { gray, color });
         }
     }
     if v.is_empty() {
         eprintln!("no template files, synthetic fallback");
-        v.push(load_template_gray("x_template.png")?);
+        let gray = load_template_gray("x_template.png")?;
+        let mut color = Mat::zeros(64, 64, core::CV_8UC3)?.to_mat()?;
+        let white = core::Scalar::new(255.0, 255.0, 255.0, 0.0);
+        imgproc::line(
+            &mut color,
+            Point::new(10, 10),
+            Point::new(54, 54),
+            white,
+            8,
+            imgproc::LINE_8,
+            0,
+        )?;
+        imgproc::line(
+            &mut color,
+            Point::new(54, 10),
+            Point::new(10, 54),
+            white,
+            8,
+            imgproc::LINE_8,
+            0,
+        )?;
+        v.push(RawTemplate { gray, color });
     }
     Ok(v)
+}
+
+// Mean HSV of a BGR patch, channels as [H 0..180, S, V].
+pub fn hsv_mean(bgr: &Mat) -> anyhow::Result<[f64; 3]> {
+    let mut hsv = Mat::default();
+    imgproc::cvt_color_def(bgr, &mut hsv, imgproc::COLOR_BGR2HSV)?;
+    let m = core::mean(&hsv)?;
+    Ok([m[0], m[1], m[2]])
+}
+
+// Klick'r getColorDiff: circular H distance, linear S/V, mean on 0..100.
+pub fn color_diff(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let mut h = (a[0] - b[0]).abs();
+    if h > 90.0 {
+        h = 180.0 - h;
+    }
+    let s = (a[1] - b[1]).abs();
+    let v = (a[2] - b[2]).abs();
+    ((h / 90.0) + (s / 255.0) + (v / 255.0)) * (100.0 / 3.0)
 }
 
 pub fn load_template_gray(path: &str) -> anyhow::Result<Mat> {
@@ -104,39 +153,54 @@ pub fn canny(gray: &Mat) -> anyhow::Result<Mat> {
 }
 
 // Precompute once at startup: 5 scales per template, best wins per frame.
-pub fn build_pyramid(base: &Mat, tpl_id: usize) -> anyhow::Result<Vec<Tpl>> {
+pub fn build_pyramid(raw: &RawTemplate, tpl_id: usize) -> anyhow::Result<Vec<Tpl>> {
     let mut out = Vec::with_capacity(SCALES.len());
     for &s in &SCALES {
-        let mut resized = Mat::default();
+        let mut resized_gray = Mat::default();
+        let mut resized_color = Mat::default();
         imgproc::resize(
-            base,
-            &mut resized,
+            &raw.gray,
+            &mut resized_gray,
             Size::new(0, 0),
             s,
             s,
             imgproc::INTER_LINEAR,
         )?;
-        if resized.cols() < 10 || resized.rows() < 10 {
+        imgproc::resize(
+            &raw.color,
+            &mut resized_color,
+            Size::new(0, 0),
+            s,
+            s,
+            imgproc::INTER_LINEAR,
+        )?;
+        if resized_gray.cols() < 10 || resized_gray.rows() < 10 {
             continue;
         }
-        let edges = canny(&resized)?;
+        let edges = canny(&resized_gray)?;
+        let hsv = hsv_mean(&resized_color)?;
         out.push(Tpl {
             w: edges.cols(),
             h: edges.rows(),
             tpl: tpl_id,
+            hsv,
             edges,
         });
     }
     Ok(out)
 }
 
-pub fn match_roi(roi_edges: &Mat, pyramid: &[Tpl]) -> anyhow::Result<ScoredLoc> {
+pub fn match_roi(
+    roi_edges: &Mat,
+    roi_color: &Mat,
+    pyramid: &[Tpl],
+) -> anyhow::Result<ScoredLoc> {
+    // Klick'r parseMatchingResult port: per scale, take the best peak; if the
+    // HSV color gate rejects it, suppress that area and try the NEXT peak
+    // (up to MAX_CANDIDATES) instead of trusting the global max blindly.
+    let mut best: ScoredLoc = None;
     let mut best_score = 0.0;
-    let mut best_loc = Point::new(0, 0);
-    let mut best_w = 0;
-    let mut best_h = 0;
-    let mut best_tpl = 0;
-    for t in pyramid {
+    'outer: for t in pyramid {
         if t.w > roi_edges.cols() || t.h > roi_edges.rows() {
             continue;
         }
@@ -148,32 +212,50 @@ pub fn match_roi(roi_edges: &Mat, pyramid: &[Tpl]) -> anyhow::Result<ScoredLoc> 
             TM_CCOEFF_NORMED,
             &core::no_array(),
         )?;
-        let mut max_val = 0.0;
-        let mut max_loc = Point::new(0, 0);
-        core::min_max_loc(
-            &result,
-            None,
-            Some(&mut max_val),
-            None,
-            Some(&mut max_loc),
-            &core::no_array(),
-        )?;
-        if max_val > best_score {
-            best_score = max_val;
-            best_loc = max_loc;
-            best_w = t.w;
-            best_h = t.h;
-            best_tpl = t.tpl;
-            if best_score >= STRONG_HIT {
+        for _ in 0..MAX_CANDIDATES {
+            let mut max_val = 0.0;
+            let mut max_loc = Point::new(0, 0);
+            core::min_max_loc(
+                &result,
+                None,
+                Some(&mut max_val),
+                None,
+                Some(&mut max_loc),
+                &core::no_array(),
+            )?;
+            if max_val < MATCH_CONF {
                 break;
             }
+            let r = Rect::new(max_loc.x, max_loc.y, t.w, t.h);
+            let pass = match Mat::roi(roi_color, r) {
+                Ok(v) => match hsv_mean(&v.clone_pointee()) {
+                    Ok(m) => color_diff(m, t.hsv) <= COLOR_MAX,
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+            if pass {
+                if max_val > best_score {
+                    best_score = max_val;
+                    best = Some((max_loc, t.w, t.h, max_val, t.tpl));
+                }
+                if max_val >= STRONG_CONF {
+                    break 'outer;
+                }
+                break;
+            }
+            // Reject: paint peak away, look at the next one in this scale.
+            imgproc::rectangle(
+                &mut result,
+                r,
+                core::Scalar::all(-1.0),
+                -1,
+                imgproc::LINE_8,
+                0,
+            )?;
         }
     }
-    if best_score >= MATCH_THRESH {
-        Ok(Some((best_loc, best_w, best_h, best_score, best_tpl)))
-    } else {
-        Ok(None)
-    }
+    Ok(best)
 }
 
 pub fn clamp_rect(x: i32, y: i32, w: i32, h: i32, cols: i32, rows: i32) -> Option<Rect> {

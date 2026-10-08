@@ -9,9 +9,14 @@ use crate::{
 
 // One trait per screen job. Hands (capture/detect/tap/orb) are shared,
 // each automation holds only its own template + logic.
+pub struct Frame {
+    pub gray: Mat,
+    pub color: Mat,
+}
+
 pub trait ScreenAutomation {
     fn name(&self) -> &str;
-    fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>>;
+    fn step(&mut self, frame: &Frame) -> anyhow::Result<Option<Hit>>;
     fn cooldown_ms(&self) -> u64;
     /// Called by main after a tap actually fired, so jobs can budget spots.
     fn note_tapped(&mut self, _x: i32, _y: i32) {}
@@ -93,9 +98,9 @@ impl ScreenAutomation for OrbXCloser {
         1200
     }
 
-    fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>> {
-        let cols = gray.cols();
-        let rows = gray.rows();
+    fn step(&mut self, frame: &Frame) -> anyhow::Result<Option<Hit>> {
+        let cols = frame.gray.cols();
+        let rows = frame.gray.rows();
 
         // Fast path: box around last hit, raw gray (ORB needs texture).
         if let Some(p) = self.last_hit {
@@ -107,7 +112,7 @@ impl ScreenAutomation for OrbXCloser {
                 cols,
                 rows,
             ) {
-                if let Ok(roi_view) = Mat::roi(gray, r) {
+                if let Ok(roi_view) = Mat::roi(frame.gray, r) {
                     let roi: Mat = roi_view.clone_pointee();
                     if let Ok(Some((pt, n))) = self.orb.match_roi(&roi) {
                         let hit = Hit {
@@ -127,7 +132,7 @@ impl ScreenAutomation for OrbXCloser {
 
         let mut best: Option<Hit> = None;
         for region in detect::default_regions(cols, rows) {
-            let roi: Mat = match Mat::roi(gray, region.rect) {
+            let roi: Mat = match Mat::roi(frame.gray, region.rect) {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
@@ -217,9 +222,9 @@ impl ScreenAutomation for AdCloser {
         self.budget.note_tapped(x, y);
     }
 
-    fn step(&mut self, gray: &Mat) -> anyhow::Result<Option<Hit>> {
-        let cols = gray.cols();
-        let rows = gray.rows();
+    fn step(&mut self, frame: &Frame) -> anyhow::Result<Option<Hit>> {
+        let cols = frame.gray.cols();
+        let rows = frame.gray.rows();
         self.budget.tick();
 
         if let Some(p) = self.last_hit {
@@ -231,10 +236,13 @@ impl ScreenAutomation for AdCloser {
                 cols,
                 rows,
             ) {
-                if let Ok(roi_view) = Mat::roi(gray, r) {
-                    let roi: Mat = roi_view.clone_pointee();
+                if let (Ok(gview), Ok(cview)) = (Mat::roi(frame.gray, r), Mat::roi(frame.color, r)) {
+                    let roi: Mat = gview.clone_pointee();
+                    let croi: Mat = cview.clone_pointee();
                     if let Ok(re) = detect::canny(&roi) {
-                        if let Ok(Some((loc, w, h, s, t))) = detect::match_roi(&re, &self.pyramid) {
+                        if let Ok(Some((loc, w, h, s, t))) =
+                            detect::match_roi(&re, &croi, &self.pyramid)
+                        {
                             let hit = Hit {
                                 x: r.x + loc.x + w / 2,
                                 y: r.y + loc.y + h / 2,
@@ -255,7 +263,11 @@ impl ScreenAutomation for AdCloser {
 
         let mut best: Option<Hit> = None;
         for region in detect::default_regions(cols, rows) {
-            let roi: Mat = match Mat::roi(gray, region.rect) {
+            let roi: Mat = match Mat::roi(frame.gray, region.rect) {
+                Ok(v) => v.clone_pointee(),
+                Err(_) => continue,
+            };
+            let croi: Mat = match Mat::roi(frame.color, region.rect) {
                 Ok(v) => v.clone_pointee(),
                 Err(_) => continue,
             };
@@ -263,7 +275,7 @@ impl ScreenAutomation for AdCloser {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            match detect::match_roi(&re, &self.pyramid) {
+            match detect::match_roi(&re, &croi, &self.pyramid) {
                 Ok(Some((loc, w, h, s, t))) => {
                     let cand = Hit {
                         x: region.rect.x + loc.x + w / 2,
@@ -277,7 +289,7 @@ impl ScreenAutomation for AdCloser {
                         .map(|b: &Hit| cand.score > b.score)
                         .unwrap_or(true);
                     if better {
-                        let strong = cand.score >= detect::STRONG_HIT;
+                        let strong = cand.score >= detect::STRONG_CONF;
                         best = Some(cand);
                         if strong {
                             break;

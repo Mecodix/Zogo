@@ -9,7 +9,7 @@ mod tap;
 
 use std::time::Duration;
 
-use automation::{AdCloser, ScreenAutomation};
+use automation::{AdCloser, Frame, ScreenAutomation};
 use tap::Tapper;
 
 fn main() -> anyhow::Result<()> {
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
     // device stops giving frames at all.
     let mut bad_frames = 0u32;
     loop {
-        let gray = match capture::capture_gray() {
+        let color = match capture::capture_color() {
             Ok(m) => {
                 bad_frames = 0;
                 m
@@ -41,10 +41,18 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+        let gray = match capture::to_gray(&color) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("bad gray: {:#}", e);
+                continue;
+            }
+        };
+        let frame = Frame { gray, color };
 
         let mut fired_cooldown = 0u64;
         for job in jobs.iter_mut() {
-            match job.step(&gray) {
+            match job.step(&frame) {
                 Ok(Some(h)) => {
                     eprintln!(
                         "hit [{}] {:.3} tpl{} @ {},{} ({})",

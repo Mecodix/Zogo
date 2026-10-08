@@ -7,16 +7,26 @@ use opencv::{
 };
 
 // Reusable hand: screen capture. Zero disk I/O, RAM only.
-// Primary PNG (318ms on SM-E146B), fallback RAW (638ms).
-pub fn capture_gray() -> anyhow::Result<Mat> {
-    match capture_png_gray() {
+// Primary PNG (318ms on SM-E146B), fallback RAW (638ms). Color kept so the
+// detector can run Klick'r's second gate: HSV mean check on candidates.
+pub fn capture_color() -> anyhow::Result<Mat> {
+    match capture_png_color() {
         Ok(m) => Ok(m),
-        Err(png_err) => capture_raw_gray()
+        Err(png_err) => capture_raw_color()
             .map_err(|raw_err| anyhow::anyhow!("png: {:#} | raw: {:#}", png_err, raw_err)),
     }
 }
 
-fn capture_png_gray() -> anyhow::Result<Mat> {
+pub fn to_gray(color: &Mat) -> anyhow::Result<Mat> {
+    let mut gray = Mat::default();
+    imgproc::cvt_color_def(color, &mut gray, imgproc::COLOR_BGR2GRAY)?;
+    if gray.empty() {
+        anyhow::bail!("gray empty");
+    }
+    Ok(gray)
+}
+
+fn capture_png_color() -> anyhow::Result<Mat> {
     let out = Command::new("screencap")
         .arg("-p")
         .output()
@@ -25,7 +35,7 @@ fn capture_png_gray() -> anyhow::Result<Mat> {
         anyhow::bail!("empty png stdout");
     }
     let buf = Vector::<u8>::from_slice(&out.stdout);
-    let m = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_GRAYSCALE)?;
+    let m = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_COLOR)?;
     if m.empty() {
         anyhow::bail!("imdecode empty ({} bytes in)", out.stdout.len());
     }
@@ -33,7 +43,7 @@ fn capture_png_gray() -> anyhow::Result<Mat> {
 }
 
 // Android 15 = 16-byte header (w,h,fmt,colorspace), older = 12.
-fn capture_raw_gray() -> anyhow::Result<Mat> {
+fn capture_raw_color() -> anyhow::Result<Mat> {
     let out = Command::new("screencap")
         .output()
         .map_err(|e| anyhow::anyhow!("spawn screencap: {}", e))?;
@@ -67,11 +77,10 @@ fn capture_raw_gray() -> anyhow::Result<Mat> {
         }
         dst.copy_from_slice(pixels);
     }
-    let mut gray = Mat::default();
-    // _def form: portable across OpenCV 4.5 (4 args) and 4.11+ (5th AlgorithmHint).
-    imgproc::cvt_color_def(&rgba, &mut gray, imgproc::COLOR_RGBA2GRAY)?;
-    if gray.empty() {
+    let mut color = Mat::default();
+    imgproc::cvt_color_def(&rgba, &mut color, imgproc::COLOR_RGBA2BGR)?;
+    if color.empty() {
         anyhow::bail!("cvt empty");
     }
-    Ok(gray)
+    Ok(color)
 }
