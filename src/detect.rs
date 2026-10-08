@@ -10,7 +10,9 @@ use opencv::{
 pub const SCALES: [f64; 5] = [0.85, 0.92, 1.0, 1.08, 1.15];
 pub const CANNY_LOW: f64 = 50.0;
 pub const CANNY_HIGH: f64 = 150.0;
-pub const MATCH_THRESH: f64 = 0.55;
+// 0.75: device logs show true X at 0.83+, false positives at ~0.65.
+// Lenient thresholds tap static UI chrome; strict ones only fire on the ad.
+pub const MATCH_THRESH: f64 = 0.75;
 pub const STRONG_HIT: f64 = 0.78;
 pub const TRACK_SIZE: i32 = 140;
 
